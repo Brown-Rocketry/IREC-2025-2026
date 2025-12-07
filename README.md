@@ -24,4 +24,3 @@ Link to or describe telemetry data from test flights, maybe include graphs or an
 ## Safety & Compliance
 Any notes about meeting IREC requirements or safety protocols
 ## License
-Standard open-source license
