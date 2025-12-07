@@ -76,22 +76,30 @@ Led by Chicha Nimitpornsuko, the avionics team is responsible for:
 - **Live Video:** 2x DJI O3 Air Unit cameras with live streaming capability
 
 ### Payload Data Acquisition
-Custom Arduino-based system for monitoring the terrarium payload:
+Multi-microcontroller system for monitoring the terrarium payload and flight dynamics:
 
-**Hardware:**
-- Arduino Uno R3 microcontroller
-- MPU-6050 6-axis IMU (acceleration and gyroscope)
-- M10 u-blox GPS module
+**AdaCore/STM32 System (Primary Flight Data):**
+- STM32 Nucleo-G431KB development board
+- Adafruit BNO055 9-DOF IMU (acceleration, gyroscope, magnetometer)
 - Adafruit BMP580 temperature and pressure sensor
+- Possible terrarium environmental sensors integration
 - SD card module for data logging
 - Independent Molicel P45B battery with pull-pin switch
+
+**Arduino System (GPS & Recovery):**
+- Arduino Uno R3 microcontroller
+- M10 u-blox GPS module
+- Recovery system monitoring
+- Parachute deployment event logging
+- Independent power supply
 
 **Monitored Parameters:**
 - Temperature (external and internal to terrarium)
 - Barometric pressure
-- Humidity
-- 3-axis acceleration and angular velocity
+- Humidity (if integrated with AdaCore system)
+- 9-axis motion data (3-axis acceleration, gyroscope, magnetometer)
 - GPS position and altitude
+- Recovery events (drogue and main deployment timestamps)
 - Timestamp for all measurements
 
 **Data Storage:** All sensor data logged to SD card for post-flight analysis
@@ -138,7 +146,8 @@ The payload is a functional 3U CubeSat (10 cm × 10 cm × 30 cm) containing a he
 - SPI.h (SD card interface)
 - SD.h (SD card operations)
 - Adafruit_BMP280.h (pressure/temp sensor)
-- MPU6050.h (IMU)
+- Adafruit_BNO055.h (9-DOF IMU)
+- Adafruit_Sensor.h (unified sensor library)
 - TinyGPS++.h (GPS parsing)
 ```
 
