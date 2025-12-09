@@ -76,7 +76,7 @@ Led by Chicha Nimitpornsuko, the avionics team is responsible for:
 - **Live Video:** 2x DJI O3 Air Unit cameras with live streaming capability
 
 ### Payload Data Acquisition
-Multi-microcontroller system for monitoring the terrarium payload and flight dynamics:
+Multi-microcontroller system for monitoring the terrarium payload and flight dynamics(some details TBD):
 
 **AdaCore/STM32 System (Primary Flight Data):**
 - STM32 Nucleo-G431KB development board
@@ -122,7 +122,7 @@ The payload is a functional 3U CubeSat (10 cm × 10 cm × 30 cm) containing a he
 - Apogee detection and drogue deployment
 - Barometric altitude-based main deployment at 1,500 ft AGL
 
-### Data Acquisition (Arduino)
+### Data Acquisition (Arduino)(not confirmed)
 - Real-time sensor polling and timestamping
 - SD card data logging with error handling
 - Low-power operation during coast phase
@@ -140,7 +140,7 @@ The payload is a functional 3U CubeSat (10 cm × 10 cm × 30 cm) containing a he
 - Blue Raven configuration software
 - Featherweight GPS configuration utility
 
-### Arduino Libraries
+### Arduino Libraries(not confirmed)
 ```
 - Wire.h (I2C communication)
 - SPI.h (SD card interface)
