@@ -13,3 +13,6 @@ executables = ["terrarium"]
 
 [test]
 runner = "alire"
+
+[[depends-on]]
+light_tasking_stm32g4xx = "*"
