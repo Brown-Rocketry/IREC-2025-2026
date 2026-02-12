@@ -7,7 +7,11 @@ project Terrarium is
    for Object_Dir use "obj/" & Terrarium_Config.Build_Profile;
    for Create_Missing_Dirs use "True";
    for Exec_Dir use "bin";
-   for Main use ("terrarium.adb");
+   for Main use (
+               "terrarium.adb",
+               "blinky.adb"
+               );
+
 
    for Target use runtime_build'Target;
    for Runtime ("Ada") use runtime_build'Runtime ("Ada");
