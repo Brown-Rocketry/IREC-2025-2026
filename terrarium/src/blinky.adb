@@ -5,22 +5,24 @@ use STM32G431xx.GPIO;
 
 procedure Blinky is
 begin
-   -- enable GPIOB clock
-   RCC_Periph.AHB2ENR.GPIOBEN := 1;
+   -- enable GPIOA clock (NOT GPIOB)
+   RCC_Periph.AHB2ENR.GPIOAEN := 1;
+   -- configure PA5 as output
    -- set to output mode
-   GPIOB_Periph.MODER.Arr (8) := 2#01#;
+   GPIOA_Periph.MODER.Arr (5) := 2#01#;
    -- push pull using array
-   GPIOB_Periph.OTYPER.OT.Arr(8) := 0;
+   GPIOA_Periph.OTYPER.OT.Arr(5) := 0;
    -- no pull
-   GPIOB_Periph.PUPDR.Arr(8) := 2#00#;
+   GPIOA_Periph.PUPDR.Arr(5) := 2#00#;
    -- low speed
-   GPIOB_Periph.OSPEEDR.Arr(8) := 2#00#;
+   GPIOA_Periph.OSPEEDR.Arr(5) := 2#00#;
+
    loop 
       -- Turn LED on (PB8 high)
-      GPIOB_Periph.BSRR.BS.Arr(8) := 1;
+      GPIOA_Periph.BSRR.BS.Arr(5) := 1;
       delay 0.1;
       -- Turn LED off (PB8 low)
-      GPIOB_Periph.BSRR.BR.Arr(8) := 1;
+      GPIOA_Periph.BSRR.BR.Arr(5) := 1;
       delay 0.1;
    end loop;
 end Blinky;
