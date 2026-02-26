@@ -1,0 +1,22 @@
+name = "terrarium_pico"
+description = ""
+version = "0.1.0-dev"
+
+authors = ["Your Name"]
+maintainers = ["Your Name <example@example.com>"]
+licenses = "MIT OR Apache-2.0 WITH LLVM-exception"
+website = ""
+tags = []
+
+executables = ["terrarium_pico"]
+
+[[depends-on]]
+rp2040_hal = "*"
+pico_bsp = "*"
+light_tasking_rp2040 = "*"
+
+[configuration.values]
+rp2040_hal.Use_Startup = false
+rp2040_hal.Interrupts = "bb_runtimes"
+light_tasking_rp2040.Max_CPUs = 2
+light_tasking_rp2040.Board = "rpi_pico"

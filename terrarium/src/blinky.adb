@@ -20,9 +20,9 @@ begin
    loop 
       -- Turn LED on (PB8 high)
       GPIOA_Periph.BSRR.BS.Arr(5) := 1;
-      delay 0.1;
+      delay 1.0;
       -- Turn LED off (PB8 low)
       GPIOA_Periph.BSRR.BR.Arr(5) := 1;
-      delay 0.1;
+      delay 1.0;
    end loop;
 end Blinky;

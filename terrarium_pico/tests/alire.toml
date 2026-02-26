@@ -1,0 +1,13 @@
+name = "terrarium_pico_tests"
+description = "Tests for the built-in Alire test runner"
+version = "0.0.0-test"
+
+[[depends-on]]
+terrarium_pico = "*"
+
+[[pins]]
+terrarium_pico = { path = ".." }
+
+[build-profiles]
+terrarium_pico       = "validation"
+terrarium_pico_tests = "validation"
