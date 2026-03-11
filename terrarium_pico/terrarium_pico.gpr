@@ -10,7 +10,9 @@ project Terrarium_Pico is
    for Object_Dir use "obj/" & Terrarium_Pico_Config.Build_Profile;
    for Create_Missing_Dirs use "True";
    for Exec_Dir use "bin";
-   for Main use ("terrarium_pico.adb");
+   for Main use (
+      "i2c_demo.adb"
+      );
 
    package Compiler is
       for Default_Switches ("Ada") use Terrarium_Pico_Config.Ada_Compiler_Switches;
