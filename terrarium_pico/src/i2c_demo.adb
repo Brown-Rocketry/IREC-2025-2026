@@ -82,6 +82,27 @@ procedure i2c_demo is
       end if;
    end Read_Who_Am_I;
 
+   procedure I2C_Scan is
+      Port   : RP.I2C_Master.I2C_Master_Port renames RP.Device.I2CM_0;
+      Data   : I2C_Data (1 .. 1);
+      Status : HAL.I2C.I2C_Status;
+   begin
+      Put_Line ("Scanning I2C bus...");
+      for Addr in HAL.I2C.I2C_Address range 1 .. 127 loop
+         Port.Mem_Read
+            (Addr          => Addr,
+            Mem_Addr      => 0,
+            Mem_Addr_Size => Memory_Size_8b,
+            Data          => Data,
+            Status        => Status,
+            Timeout       => 100);
+         if Status = HAL.I2C.Ok then
+            Put_Line ("Found device at: " & Addr'Image);
+         end if;
+      end loop;
+      Put_Line ("Scan complete.");
+   end I2C_Scan;
+
 begin
    --  RP.Clock.Initialize (12_000_000);
    RP.Clock.Initialize (Pico.XOSC_Frequency);
@@ -112,6 +133,9 @@ begin
 
    Put_Line ("I2C ready");
 
+
+   I2C_Scan;
+   
    loop
       Put_Line ("loop start");
 
