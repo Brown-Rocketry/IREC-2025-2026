@@ -87,34 +87,34 @@ begin
 
 
 
-   declare
-      type Board_Info_Record is record
-         Mandatory_Bit : Bit;
-         Manufacturer  : UInt11; -- <- 16#_#
-         Part_Number   : UInt16;
-         Version       : UInt4;
-      end record with Size => 32;
+   --  declare
+   --     type Board_Info_Record is record
+   --        Mandatory_Bit : Bit;
+   --        Manufacturer  : UInt11; -- <- 16#_#
+   --        Part_Number   : UInt16;
+   --        Version       : UInt4;
+   --     end record with Size => 32;
 
-      type Raw_Message is array (0 .. 3) of Byte;
+   --     type Raw_Message is array (0 .. 3) of Byte;
 
-      --  function To_Board_Info is new Ada.Unchecked_Conversion
-      --     (Raw_Message, Board_Info_Record);
+   --     --  function To_Board_Info is new Ada.Unchecked_Conversion
+   --     --     (Raw_Message, Board_Info_Record);
 
-      function To_UIn32 is new Ada.Unchecked_Conversion
-         (Raw_Message, UInt32);
+   --     function To_UIn32 is new Ada.Unchecked_Conversion
+   --        (Raw_Message, UInt32);
 
-      RM : Raw_Message := 0;
-      BI : Board_Info_Record with Address => RM'Address;
-      BII : UInt32;
-   begin
-      RM := Read_Next (Stream);
-      -- BI := To_Board_Info (RM);
-      BII := To_UInt32 (RM);
+   --     RM : Raw_Message := 0;
+   --     BI : Board_Info_Record with Address => RM'Address;
+   --     BII : UInt32;
+   --  begin
+   --     RM := Read_Next (Stream);
+   --     -- BI := To_Board_Info (RM);
+   --     BII := To_UInt32 (RM);
 
-      Put_Line (BI.Mandatory_Bit'Image & ":" & 
-                BI.Manufacturer'Image & ":" &
-                BI.Part_Number'Image & ":" &
-                BI.Version'Image);
-   end;
+   --     Put_Line (BI.Mandatory_Bit'Image & ":" & 
+   --               BI.Manufacturer'Image & ":" &
+   --               BI.Part_Number'Image & ":" &
+   --               BI.Version'Image);
+   --  end;
 
 end main;
