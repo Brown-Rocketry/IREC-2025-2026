@@ -20,21 +20,13 @@ procedure i2c_demo is
    SDA : GPIO_Point := (Pin => 2);
    SCL : GPIO_Point := (Pin => 3);
 
-   --  LSM9DS1 has two I2C devices on the bus.
-   --  SA0/SDO pin HIGH (pulled up) gives these default addresses:
-   --    AG  = 0x6B -> 8-bit write = 0xD6, read = 0xD7
-   --    Mag = 0x1E -> 8-bit write = 0x3C, read = 0x3D
-   --  Addr_AG  : constant HAL.I2C.I2C_Address := 2#11010110#;  -- 0xD6
-   --  Addr_Mag : constant HAL.I2C.I2C_Address := 2#00111100#;  -- 0x3C
 
    --  7-bit addresses (SDO/SA0 pulled HIGH)
    -- HAL auto shifts them left and adds a zero
-   Addr_AG  : constant HAL.I2C.I2C_Address := 16#6B#;  -- was 0xD6
-   Addr_Mag : constant HAL.I2C.I2C_Address := 16#1E#;  -- was 0x3C
+   Addr_BMP : constant HAL.I2C.I2C_Address := 16#EE#;  
 
    --  WHO_AM_I registers
-   REG_WHO_AM_I_AG  : constant UInt8 := 16#0F#;  -- expected: 0x68
-   REG_WHO_AM_I_MAG : constant UInt8 := 16#0F#;  -- expected: 0x3D
+   REG_WHO_AM_I_BMP : constant UInt8 := 16#00#;  -- expected: 0x60
 
    procedure Put_Line(S : String) is
       Bytes  : UART_Data_8b (1 .. S'Length + 2);
@@ -84,18 +76,16 @@ procedure i2c_demo is
 
    procedure I2C_Scan is
       Port   : RP.I2C_Master.I2C_Master_Port renames RP.Device.I2CM_0;
-      Data   : I2C_Data (1 .. 1);
+      Data   : I2C_Data (1 .. 1) := (others => 0);
       Status : HAL.I2C.I2C_Status;
    begin
       Put_Line ("Scanning I2C bus...");
-      for Addr in HAL.I2C.I2C_Address range 1 .. 127 loop
-         Port.Mem_Read
-            (Addr          => Addr,
-            Mem_Addr      => 0,
-            Mem_Addr_Size => Memory_Size_8b,
-            Data          => Data,
-            Status        => Status,
-            Timeout       => 100);
+      for Addr in HAL.I2C.I2C_Address range 1 .. 255 loop
+         Port.Master_Transmit
+            (Addr    => Addr,
+            Data    => Data,
+            Status  => Status,
+            Timeout => 50);
          if Status = HAL.I2C.Ok then
             Put_Line ("Found device at: " & Addr'Image);
          end if;
@@ -126,32 +116,26 @@ begin
 
    Put_Line ("UART ready"); 
 
-   -- LSM configure
-   SDA.Configure (Output, Pull_Up, RP.GPIO.I2C, Schmitt => True);
-   SCL.Configure (Output, Pull_Up, RP.GPIO.I2C, Schmitt => True);
+   -- BSM configure
+   SDA.Configure (Output, Pull_Up, RP.GPIO.I2C);
+   SCL.Configure (Output, Pull_Up, RP.GPIO.I2C);
+   Put_Line ("Configuring I2C...");
    RP.Device.I2CM_0.Configure (Baudrate => 100_000);
+   Put_Line ("I2C configured");
 
    Put_Line ("I2C ready");
 
 
    I2C_Scan;
-   
+
    loop
-      Put_Line ("loop start");
-
       Read_Who_Am_I
-         (Label    => "LSM9DS1 Accel/Gyro",
-          Addr     => Addr_AG,
-          Reg      => REG_WHO_AM_I_AG,
-          Expected => 16#68#);
-
-      Read_Who_Am_I
-         (Label    => "LSM9DS1 Mag",
-          Addr     => Addr_Mag,
-          Reg      => REG_WHO_AM_I_MAG,
-          Expected => 16#3D#);
+         (Label    => "BMP390",
+         Addr     => Addr_BMP,
+         Reg      => REG_WHO_AM_I_BMP,
+         Expected => 16#60#);
 
       Pico.LED.Toggle;
-      RP.Device.Timer.Delay_Milliseconds (100);
+      RP.Device.Timer.Delay_Milliseconds (1000);
    end loop;
 end i2c_demo;
