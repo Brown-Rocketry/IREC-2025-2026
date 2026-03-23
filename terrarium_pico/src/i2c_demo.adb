@@ -75,23 +75,28 @@ procedure i2c_demo is
    end Read_Who_Am_I;
 
    procedure I2C_Scan is
-      Port   : RP.I2C_Master.I2C_Master_Port renames RP.Device.I2CM_0;
-      Data   : I2C_Data (1 .. 1) := (others => 0);
-      Status : HAL.I2C.I2C_Status;
-   begin
-      Put_Line ("Scanning I2C bus...");
-      for Addr in HAL.I2C.I2C_Address range 1 .. 255 loop
+   Port    : RP.I2C_Master.I2C_Master_Port renames RP.Device.I2CM_0;
+   Data    : I2C_Data (1 .. 1) := (others => 0);
+   Status  : HAL.I2C.I2C_Status;
+   Count   : Natural := 0;
+begin
+   Put_Line ("Scanning I2C bus...");
+   for Addr in HAL.I2C.I2C_Address range 16 .. 238 loop
+      if Addr mod 2 = 0 then
+         Count := Count + 1;
          Port.Master_Transmit
             (Addr    => Addr,
-            Data    => Data,
-            Status  => Status,
-            Timeout => 50);
+             Data    => Data,
+             Status  => Status,
+             Timeout => 50);
          if Status = HAL.I2C.Ok then
-            Put_Line ("Found device at: " & Addr'Image);
+            Put_Line ("Found device at 8-bit addr: " & Addr'Image);
          end if;
-      end loop;
-      Put_Line ("Scan complete.");
-   end I2C_Scan;
+         Pico.LED.Toggle;
+      end if;
+   end loop;
+   Put_Line ("Scan complete. Tried " & Count'Image & " addresses.");
+end I2C_Scan;
 
 begin
    --  RP.Clock.Initialize (12_000_000);
@@ -117,14 +122,16 @@ begin
    Put_Line ("UART ready"); 
 
    -- BSM configure
-   SDA.Configure (Output, Pull_Up, RP.GPIO.I2C);
-   SCL.Configure (Output, Pull_Up, RP.GPIO.I2C);
+   SDA.Configure (Output, Pull_Up, RP.GPIO.I2C, Schmitt => True);
+   SCL.Configure (Output, Pull_Up, RP.GPIO.I2C, Schmitt => True);
    Put_Line ("Configuring I2C...");
    RP.Device.I2CM_0.Configure (Baudrate => 100_000);
    Put_Line ("I2C configured");
 
    Put_Line ("I2C ready");
-
+   Put_Line ("Timer test start");
+   RP.Device.Timer.Delay_Milliseconds (500);
+   Put_Line ("Timer test end (should be ~500ms later)");
 
    I2C_Scan;
 
@@ -136,6 +143,6 @@ begin
          Expected => 16#60#);
 
       Pico.LED.Toggle;
-      RP.Device.Timer.Delay_Milliseconds (1000);
+      RP.Device.Timer.Delay_Milliseconds (5000);
    end loop;
 end i2c_demo;
