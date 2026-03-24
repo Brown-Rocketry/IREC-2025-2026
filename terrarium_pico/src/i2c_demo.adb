@@ -143,6 +143,6 @@ begin
          Expected => 16#60#);
 
       Pico.LED.Toggle;
-      RP.Device.Timer.Delay_Milliseconds (5000);
+      RP.Device.Timer.Delay_Milliseconds (3000);
    end loop;
 end i2c_demo;
