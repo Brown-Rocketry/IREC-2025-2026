@@ -83,7 +83,7 @@ procedure i2c_demo is
          end if;
          --  if Stat /= HAL.I2C.Ok then
          --     Put_Line ("nothing @: " & Addr'Image);
-         end if;
+         --  end if;
       end loop;
       Put_Line ("Scan complete.");
    end I2C_Scan;
