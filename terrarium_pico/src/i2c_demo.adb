@@ -17,12 +17,13 @@ procedure i2c_demo is
    SDA : GPIO_Point := (Pin => 0);
    SCL : GPIO_Point := (Pin => 1);
 
-   --  BMP390 with SDO tied to GND gives address 0x76
-   --  HAL shifts internally so pass 8-bit: 0x76 << 1 = 0xEC
-   Addr_BMP : constant HAL.I2C.I2C_Address := 16#EC#;
+   --  SHT30 fixed address 0x44
+   --  HAL shifts internally so pass 8-bit: 0x44 << 1 = 0x88
+   Addr_SHT : constant HAL.I2C.I2C_Address := 16#88#;
 
-   --  WHO_AM_I register 0x00, expected value 0x60
-   REG_WHO_AM_I : constant UInt8 := 16#00#;
+   --  SHT30 status register 0xF32D (16-bit command)
+   --  For a simple presence check we just attempt a read
+   REG_STATUS : constant UInt8 := 16#F3#;
 
    procedure Put_Line (S : String) is
       Bytes : UART_Data_8b (1 .. S'Length + 2);
@@ -35,32 +36,26 @@ procedure i2c_demo is
       UART.Transmit (Bytes, Status);
    end Put_Line;
 
-   procedure Read_Who_Am_I
-      (Label    : String;
-       Addr     : HAL.I2C.I2C_Address;
-       Expected : UInt8)
-   is
+   procedure Check_SHT30 is
       Port   : RP.I2C_Master.I2C_Master_Port renames RP.Device.I2CM_0;
-      Data   : I2C_Data (1 .. 1);
+      Data   : I2C_Data (1 .. 3);
       Stat   : HAL.I2C.I2C_Status;
    begin
-      Put_Line ("Reading WHO_AM_I for " & Label);
+      Put_Line ("Checking SHT30...");
       Port.Mem_Read
-         (Addr          => Addr,
-          Mem_Addr      => UInt16 (REG_WHO_AM_I),
+         (Addr          => Addr_SHT,
+          Mem_Addr      => UInt16 (REG_STATUS),
           Mem_Addr_Size => Memory_Size_8b,
           Data          => Data,
           Status        => Stat,
           Timeout       => 1000);
       if Stat /= HAL.I2C.Ok then
-         Put_Line (Label & ": ERR status=" & Stat'Image);
-      elsif Data (1) = Expected then
-         Put_Line (Label & ": WHO_AM_I=" & Data (1)'Image & " [OK]");
+         Put_Line ("SHT30: ERR status=" & Stat'Image);
       else
-         Put_Line (Label & ": WHO_AM_I=" & Data (1)'Image
-                   & " [UNEXPECTED, expected" & Expected'Image & "]");
+         Put_Line ("SHT30: responded [OK] status bytes="
+                   & Data (1)'Image & Data (2)'Image & Data (3)'Image);
       end if;
-   end Read_Who_Am_I;
+   end Check_SHT30;
 
    procedure I2C_Scan is
       Port   : RP.I2C_Master.I2C_Master_Port renames RP.Device.I2CM_0;
@@ -79,9 +74,6 @@ procedure i2c_demo is
          if Stat = HAL.I2C.Ok then
             Put_Line ("Found device at 7-bit addr: " & Addr'Image);
          end if;
-         --  if Stat /= HAL.I2C.Ok then
-         --     Put_Line ("nothing @: " & Addr'Image);
-         --  end if;
       end loop;
       Put_Line ("Scan complete.");
    end I2C_Scan;
@@ -117,7 +109,7 @@ begin
    I2C_Scan;
 
    loop
-      Read_Who_Am_I ("BMP390", Addr_BMP, 16#60#);
+      Check_SHT30;
       Pico.LED.Toggle;
       RP.Device.Timer.Delay_Milliseconds (3000);
    end loop;
