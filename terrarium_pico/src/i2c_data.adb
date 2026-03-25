@@ -51,6 +51,7 @@ procedure i2c_demo is
    -- bits: 0 / 0 // 0  00
    -- I2C=0 LP=0 SIM=0 MD=00 Required 0=/
 
+   -- prints a line through the UART
    procedure Put_Line (S : String) is
       Bytes : UART_Data_8b (1 .. S'Length + 2);
    begin
@@ -87,7 +88,7 @@ procedure i2c_demo is
          Put_Line (Label & ": ERR status=" & Stat'Image);
       else
          for Coord in 1 .. 3 loop
-            -- low first then high?
+            -- low first then high? or other way around?
             declare
                Lo  : constant Unsigned_16 := Unsigned_16(Data(2*Coord - 1));
                Hi  : constant Unsigned_16 := Unsigned_16(Data(2*Coord));
@@ -111,9 +112,9 @@ procedure i2c_demo is
 
    procedure Enable_Sensor
      (Label    : String;
-      Addr     : HAL.I2C.I2C_Address; 
-      Mem_Addr : UInt8;
-      Code     : UInt8)
+      Addr     : HAL.I2C.I2C_Address; --register address?
+      Mem_Addr : UInt8; --mem address to be edited?
+      Code     : UInt8) --specifications to edit with
    is
       Port   : RP.I2C_Master.I2C_Master_Port renames RP.Device.I2CM_0;
       Data   : I2C_Data (1 .. 1) := (1 => Code);
