@@ -27,20 +27,29 @@ procedure i2c_demo is
    CTRL_REG6_XL : constant UInt8 := 16#20#; -- enable register
    OUT_X_L_XL : constant UInt8 := 16#28#; -- data register
    -- read 6 bytes from this, 2 bytes for x y and z
+   ODR_XL : constant UInt8 := 16#60#; --personal settings
+   -- bits: 011  00  0  00
+   -- ODR=011 FS=00 BW_SCAL=0 BW=00
    
    --for gyroscope
    CTRL_REG1_G : constant UInt8 := 16#10#; --enable register
    OUT_X_L_G : constant UInt8 := 16#18#; --data register
    --same thing with 2 bytes per axis
+   ODR_G : constant UInt8 := 16#68#; --personal settings 
+   -- bits: 011  01  /  00
+   -- ODR=011 FS=01 Required 0=/ BW=00
 
-
-   ODR_XL : constant UInt8 := 16#60#; --personal settings  for accelerometer
-   -- bits: 0 1 1  0 0  0  0 0
-   -- ODR=011 FS=00 Required 0=0 BW=00
-
-   ODR_G : constant UInt8 := 16#68#; --personal settings  for gyro
-   -- bits: 0 1 1  0 1  0  0 0
-   -- ODR=011 FS=01 BW_SCAL=0 BW=00
+   -- for mag
+   CTRL_REG1_M : constant UInt8 := 16#20#; --operating mode
+   CTRL_REG3_M : constant UInt8 := 16#22#; --power mode
+   OUT_X_L_M : constant UInt8 := 16#28#; --data register
+   --same thing with 2 bytes per axis
+   ODR_M1 : constant UInt8 := 16#10#; --personal settings 
+   -- bits: 0 00 100  0 0  
+   -- TEMP=0 OM=00 DO=100 F_ODR=0 ST=0
+   ODR_M3 : constant UInt8 := 16#00#; --personal settings 
+   -- bits: 0 / 0 // 0  00
+   -- I2C=0 LP=0 SIM=0 MD=00 Required 0=/
 
    procedure Put_Line (S : String) is
       Bytes : UART_Data_8b (1 .. S'Length + 2);
@@ -110,7 +119,7 @@ procedure i2c_demo is
       Data   : I2C_Data (1 .. 1) := (1 => Code);
       Stat   : HAL.I2C.I2C_Status;
    begin
-      Put_Line ("Enable for " & Label);
+      Put_Line ("Enable " & Label);
       Port.Mem_Write
            (Addr          => Addr,
             Mem_Addr      => UInt16 (Mem_Addr),
@@ -149,12 +158,15 @@ begin
 
    Enable_Sensor ("LSM9DS1 Accel", Addr_AG, CTRL_REG6_XL, ODR_XL); --accel
    Enable_Sensor ("LSM9DS1 Gyro", Addr_AG, CTRL_REG1_G, ODR_G); --gyro
+   Enable_Sensor ("LSM9DS1 Mag", Addr_Mag, CTRL_REG1_M, ODR_M1); --mag operating
+   Enable_Sensor ("LSM9DS1 Mag", Addr_Mag, CTRL_REG3_M, ODR_M3); --mag power
 
    loop
-      Put_Line ("loop");  
-      Read_Data ("LSM9DS1 AG", OUT_X_L_XL, Addr_AG); --accel
-      Read_Data ("LSM9DS1 AG", OUT_X_L_G, Addr_AG); --gyro
-      RP.Device.Timer.Delay_Milliseconds (3000);
+      Put_Line ("Data:");  
+      Read_Data ("LSM9DS1 Accel", OUT_X_L_XL, Addr_AG); --accel
+      Read_Data ("LSM9DS1 Gyro", OUT_X_L_G, Addr_AG); --gyro
+      Read_Data ("LSM9DS1 Mag", OUT_X_L_M, Addr_Mag); --mag
+      RP.Device.Timer.Delay_Milliseconds (1500);
       Pico.LED.Toggle;
    end loop;
 end i2c_demo;
