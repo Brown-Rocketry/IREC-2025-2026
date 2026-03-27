@@ -16,3 +16,18 @@ runner = "alire"
 
 [[depends-on]]
 light_tasking_stm32g4xx = "*"
+machine_types = "*"
+stm32g4_ghal = "*"
+nucleo_g431rb = "*"
+
+[[pins]]
+machine_types = {path = "../machine_types"}
+stm32g4_ghal = {path = "../stm32g4_ghal"}
+nucleo_g431rb = {path = "../nucleo_g431rb"}
+
+[configuration.values]
+# Keep startup on internal HSI16 to avoid hanging while waiting for HSE.
+light_tasking_stm32g4xx.SYSCLK_Src = "HSI16"
+light_tasking_stm32g4xx.PLL_Src    = "HSI16"
+# STM32G431KB has 128 KiB flash (size code "B"), not 32 KiB ("6").
+light_tasking_stm32g4xx.MCU_Flash_Memory_Size = "B"
