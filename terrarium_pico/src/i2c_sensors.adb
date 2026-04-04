@@ -9,7 +9,7 @@ with HAL.UART; use HAL.UART;
 with Pico;
 with Interfaces; use Interfaces;
 
-procedure i2c_demo is
+procedure i2c_sensors is
    UART    : RP.UART.UART_Port renames RP.Device.UART_1;
    UART_TX : GPIO_Point := (Pin => 8);
    UART_RX : GPIO_Point := (Pin => 9);
@@ -22,6 +22,7 @@ procedure i2c_demo is
    --  HAL expects 7-bit addresses; it shifts left internally
    Addr_AG  : constant HAL.I2C.I2C_Address := 16#D6#;  -- 0x6B shifted left = 0xD6
    Addr_Mag : constant HAL.I2C.I2C_Address := 16#3C#;  -- 0x1E shifted left = 0x3C
+   Addr_BMP : constant HAL.I2C.I2C_Address := 16#EE#;  -- SDO high -> 0x77 << 1 = 0xEE
 
    --for accelerometer
    CTRL_REG6_XL : constant UInt8 := 16#20#; -- enable register
@@ -51,22 +52,32 @@ procedure i2c_demo is
    -- bits: 0 / 0 // 0  00
    -- I2C=0 LP=0 SIM=0 MD=00 Required 0=/
 
+      --for BMP
+   CTRL_PWR_BMP : constant UInt8 := 16#1B#; --power on
+   -- 04-09 are pressure and temperature, 3 bytes each
+   OUT_BMP : constant UInt8 := 16#04#; --data registers
+   SETTINGS_BMP : constant UInt8 := 16#33#; -- personal settings
+
+
    -- prints a line through the UART
    procedure Put_Line (S : String) is
-      Bytes : UART_Data_8b (1 .. S'Length + 2);
    begin
       for I in S'Range loop
-         Bytes (I - S'First + 1) := Character'Pos (S (I));
+         declare
+            B : UART_Data_8b (1 .. 1) := (1 => Character'Pos (S (I)));
+         begin
+            UART.Transmit (B, Status);
+         end;
       end loop;
-      Bytes (S'Length + 1) := Character'Pos (ASCII.CR);
-      Bytes (S'Length + 2) := Character'Pos (ASCII.LF);
-      UART.Transmit (Bytes, Status);
-      for I in 1 .. 10_000 loop
-         null;
-      end loop;
+      declare
+         CRLF : UART_Data_8b (1 .. 2) := (Character'Pos (ASCII.CR), Character'Pos (ASCII.LF));
+      begin
+         UART.Transmit (CRLF, Status);
+      end;
+      RP.Device.Timer.Delay_Milliseconds (5);
    end Put_Line;
 
-   procedure Read_Data
+   procedure Read_LSM9DSI
       (Label    : String;
        Mem_Addr : UInt8;
        Addr     : HAL.I2C.I2C_Address)
@@ -108,7 +119,48 @@ procedure i2c_demo is
             end;
          end loop;
       end if;
-   end Read_Data;
+   end Read_LSM9DSI;
+
+   procedure Read_BMP390
+      (Label    : String;
+      Mem_Addr : UInt8;
+      Addr     : HAL.I2C.I2C_Address)
+   is
+      Port : RP.I2C_Master.I2C_Master_Port renames RP.Device.I2CM_0;
+      Data : I2C_Data (1 .. 6);
+      Stat : HAL.I2C.I2C_Status;
+   begin
+      Put_Line ("Reading Data for " & Label);
+      Port.Mem_Read
+      (Addr          => Addr,
+         Mem_Addr      => UInt16 (Mem_Addr),
+         Mem_Addr_Size => Memory_Size_8b,
+         Data          => Data,
+         Status        => Stat,
+         Timeout       => 1000);
+      if Stat /= HAL.I2C.Ok then
+         Put_Line (Label & ": ERR status=" & Stat'Image);
+      else
+         declare
+            Press : constant Unsigned_32 :=
+               Unsigned_32 (Data (1)) +
+               Unsigned_32 (Data (2)) * 256 +
+               Unsigned_32 (Data (3)) * 65536;
+            Press_I : constant Integer_32 := Integer_32 (Press);
+         begin
+            Put_Line (Label & ": Press_raw=" & Press_I'Image);
+         end;
+         declare
+            Temp : constant Unsigned_32 :=
+               Unsigned_32 (Data (4)) +
+               Unsigned_32 (Data (5)) * 256 +
+               Unsigned_32 (Data (6)) * 65536;
+            Temp_I : constant Integer_32 := Integer_32 (Temp);
+         begin
+            Put_Line (Label & ": Temp_raw=" & Temp_I'Image);
+         end;
+      end if;
+   end Read_BMP390;
 
    procedure Enable_Sensor
      (Label    : String;
@@ -155,19 +207,26 @@ begin
    SCL.Configure (Output, Pull_Up, RP.GPIO.I2C, Schmitt => True);
    RP.Device.I2CM_0.Configure (Baudrate => 100_000);
    
+
+   Put_Line ("----------------------------------------"); 
    Put_Line ("Starting..."); 
+
+
+   
 
    Enable_Sensor ("LSM9DS1 Accel", Addr_AG, CTRL_REG6_XL, ODR_XL); --accel
    Enable_Sensor ("LSM9DS1 Gyro", Addr_AG, CTRL_REG1_G, ODR_G); --gyro
    Enable_Sensor ("LSM9DS1 Mag", Addr_Mag, CTRL_REG1_M, ODR_M1); --mag operating
    Enable_Sensor ("LSM9DS1 Mag", Addr_Mag, CTRL_REG3_M, ODR_M3); --mag power
+   Enable_Sensor ("BMP390", Addr_BMP, CTRL_PWR_BMP, SETTINGS_BMP); --bmp power
 
    loop
       Put_Line ("Data:");  
-      Read_Data ("LSM9DS1 Accel", OUT_X_L_XL, Addr_AG); --accel
-      Read_Data ("LSM9DS1 Gyro", OUT_X_L_G, Addr_AG); --gyro
-      Read_Data ("LSM9DS1 Mag", OUT_X_L_M, Addr_Mag); --mag
+      Read_LSM9DSI ("LSM9DS1 Accel", OUT_X_L_XL, Addr_AG); --accel
+      Read_LSM9DSI ("LSM9DS1 Gyro", OUT_X_L_G, Addr_AG); --gyro
+      Read_LSM9DSI ("LSM9DS1 Mag", OUT_X_L_M, Addr_Mag); --mag
+      Read_BMP390 ("BMP390", OUT_BMP, Addr_BMP); --bmp
       RP.Device.Timer.Delay_Milliseconds (1500);
       Pico.LED.Toggle;
    end loop;
-end i2c_demo;
+end i2c_sensors;
