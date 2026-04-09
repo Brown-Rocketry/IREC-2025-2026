@@ -11,19 +11,16 @@ tags = []
 
 executables = ["terrarium"]
 
-[test]
-runner = "alire"
-
 [[depends-on]]
 light_tasking_stm32g4xx = "*"
 machine_types = "*"
 stm32g4_ghal = "*"
-nucleo_g431rb = "*"
+nucleo_g431kb = "*"
 
 [[pins]]
-machine_types = {path = "../machine_types"}
-stm32g4_ghal = {path = "../stm32g4_ghal"}
-nucleo_g431rb = {path = "../nucleo_g431rb"}
+machine_types = {path = "../../machine_types"}
+stm32g4_ghal = {path = "../../stm32g4_ghal"}
+nucleo_g431kb = {path = "../../nucleo_g431kb"}
 
 [configuration.values]
 # Keep startup on internal HSI16 to avoid hanging while waiting for HSE.
