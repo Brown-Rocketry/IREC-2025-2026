@@ -470,12 +470,12 @@ begin
       ID    : HAL.SPI.SPI_Data_8b (1 .. 3);
       Dummy : constant HAL.SPI.SPI_Data_8b (1 .. 3) := (others => 0);
       -- Discard the junk byte clocked in while sending the command
-      Junk  : HAL.SPI.SPI_Data_8b (1 .. 1);
-      Dummy1 : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (others => 0);
+      --  Junk  : HAL.SPI.SPI_Data_8b (1 .. 1);
+      --  Dummy1 : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (others => 0);
    begin
       CS_Low;
       Send_Byte (CMD_JEDEC_ID);
-      Transfer (Dummy1, Junk);   -- flush the RX byte from sending the command
+      --  Transfer (Dummy1, Junk);   -- flush the RX byte from sending the command
       Transfer (Dummy,  ID);
       CS_High;
       -- Expected: 239 (0xEF), 64 (0x40), 24 (0x18)
