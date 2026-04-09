@@ -21,9 +21,9 @@ stm32g4_ghal = "*"
 nucleo_g431rb = "*"
 
 [[pins]]
-machine_types = {path = "../machine_types"}
-stm32g4_ghal = {path = "../stm32g4_ghal"}
-nucleo_g431rb = {path = "../nucleo_g431rb"}
+machine_types = {path = "../../machine_types"}
+stm32g4_ghal = {path = "../../stm32g4_ghal"}
+nucleo_g431rb = {path = "../../nucleo_g431rb"}
 
 [configuration.values]
 # Keep startup on internal HSI16 to avoid hanging while waiting for HSE.
