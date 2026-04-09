@@ -15,7 +15,8 @@ project Terrarium_Pico is
    for Exec_Dir use "bin";
    for Main use ( 
       -- "spi_flash_test.adb"
-      "i2c_sensors.adb"
+      -- "i2c_sensors.adb"
+      -- "flight_logger.adb"
       );
 
    package Compiler is
