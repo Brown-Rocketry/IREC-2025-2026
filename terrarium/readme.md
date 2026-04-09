@@ -18,3 +18,18 @@ A payload containing soil, plant life, and water for flight in the rocket.
 ### Microcontroller
 - **[SC0915](https://www.digikey.com/en/products/detail/raspberry-pi/SC0915/13684020)**
   - [Datasheet](https://pip-assets.raspberrypi.com/categories/610-raspberry-pi-pico/documents/RP-008307-DS-1-pico-datasheet.pdf?disposition=inline)
+
+
+## Deploy
+
+Set USB permissions:
+```
+sudo cp /usr/share/openocd/contrib/60-openocd.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+Using OpenOCD:
+```
+openocd -f interface/stlink.cfg -f target/stm32g4x.cfg -c "program bin/terrarium verify reset exit"
+```

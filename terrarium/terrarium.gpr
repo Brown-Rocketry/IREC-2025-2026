@@ -1,8 +1,6 @@
 with "config/terrarium_config.gpr";
 with "ravenscar_build.gpr";
 with "runtime_build.gpr";
-with "stm32g4_ghal.gpr";
-with "nucleo_g431rb.gpr";
 
 project Terrarium is
 
