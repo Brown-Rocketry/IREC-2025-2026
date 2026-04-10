@@ -1,229 +1,184 @@
-# Brown Rocketry - IREC 2025 Flight Software
+# Brown Rocketry — IREC 2025-2026 Payload Avionics
 
 **Team:** Brown Rocketry  
 **Rocket Name:** Providentia  
-**Project Name:** The Bear Minimum  
-**Competition:** IREC 2025 - 10K COTS Category
+**Competition:** IREC 2025-2026 — 10K COTS Category (cancelled)
+
+---
 
 ## Overview
 
-This repository contains the avionics and data acquisition systems for Brown University's first entry into the International Rocketry Engineering Competition (IREC). Our rocket, Providentia, is a dual-deployment rocket targeting 10,000 feet AGL, carrying a 4.1kg 3U CubeSat payload containing a sealed micro-terrarium experiment.
+This repository contains the avionics and payload data acquisition system developed for Brown University's IREC 2025-2026 entry. The rocket, Providentia, was a dual-deployment vehicle targeting 10,000 feet AGL, carrying a 3U CubeSat payload housing a sealed micro-terrarium experiment intended to assess the effects of short-term thermal, vibrational, and shock stresses on an enclosed micro-ecosystem during high-power rocket flight.
 
-**Mission:** Test the effects of short-term thermal, vibrational, and shock stresses on an enclosed micro-ecosystem during high-power rocket flight.
+IREC 2026 was cancelled before the competition could take place. The payload firmware reached a state of full sensor integration and flash datalogging prior to cancellation, and the system had not yet undergone a flight test. This repository serves as a record of the technical work completed during the 2025-2026 development cycle.
+
+---
 
 ## Team
 
 - **Student Lead:** Ethan Kim
-- **Alt Student Lead / Avionics Lead:** Chicha Nimitpornsuko
-- **Faculty Advisor:** Daniel Harris
-- **Team Mentor:** Peter Tarle (TRA L3, #18555)
-- **Flyer of Record:** Sam Hamilton (TRA L3, #16415)
+- **Faculty Advisor:** Daniel Harris  
+- **Team Mentor:** Peter Tarle (TRA L3, #18555)  
+- **Payload & Avionics Engineer:** Margeaux Corrigan (margeaux_corrigan@brown.edu)
 
-### Avionics Subsystem Team
-Led by Chicha Nimitpornsuko, the avionics team is responsible for:
-- Flight computer configuration and testing
-- Recovery system electronics and deployment charges
-- Telemetry and GPS tracking systems
-- Payload data acquisition system development
-- Ground station operations
-- Pre-flight electronics checkout procedures
-
-**Team Members:**
-- **Chicha Nimitpornsuko** (chompoonek_nimitpornsuko@brown.edu) - Avionics Lead
-- **Margeaux Corrigan** (margeaux_corrigan@brown.edu) - Incoming IREC Avionics Lead
-- **George Liao** (george_liao@brown.edu) - Avionics Team Member
-
-*Specific role assignments within the avionics subsystem are being finalized as the team develops.*
+---
 
 ## Vehicle Specifications
 
-- **Length:** 2.26 m
-- **Diameter:** 157 mm
-- **Liftoff Weight:** 22.86 kg (with motor)
-- **Payload Weight:** 4.1 kg
-- **Motor:** Aerotech M1800FJ-4 (8207.7 N-s total impulse)
-- **Target Apogee:** 10,000 ft AGL
-- **Predicted Apogee:** 10,413 ft AGL
-- **Max Velocity:** 311 m/s
-- **Max Acceleration:** 12.44 G
+| Parameter | Value |
+|---|---|
+| Length | 2.26 m |
+| Diameter | 157 mm |
+| Liftoff Weight | 22.86 kg (with motor) |
+| Payload Weight | 4.1 kg |
+| Motor | Aerotech M1800FJ-4 (8207.7 N-s total impulse) |
+| Target Apogee | 10,000 ft AGL |
+| Predicted Apogee | 10,413 ft AGL |
+| Max Velocity | 311 m/s |
+| Max Acceleration | 12.44 G |
 
-## System Architecture
+---
 
-### Flight Computers
-- **Primary & Backup:** 2x Blue Raven altimeters (dual redundancy)
-- Each powered by independent Molicel P45B 21700 Li-ion batteries
-- Separate pull-pin arming switches for each circuit
-- Configured for dual-deployment recovery
+## Payload Avionics System
 
-### Recovery System
-- **Drogue Deployment:** Apogee (~12,000 ft MSL)
-  - Parachute: Fruity Chutes 24" drogue (Cd 2.2)
-  - Primary: 1.0g black powder
-  - Backup: 1.5g black powder
-  - Descent rate: 31.1 m/s
+### Hardware
 
-- **Main Deployment:** 1,500 ft AGL
-  - Parachute: Fruity Chutes 96" Iris Ultra (Cd 2.2)
-  - Primary: 2.0g black powder
-  - Backup: 3.0g black powder
-  - Descent rate: 5.17 m/s
-  - Landing impact energy: 305J
+The payload data acquisition system runs on a **Raspberry Pi Pico (RP2040)**, programmed in Ada using the `light-cortex-m0p` bare-metal runtime. All sensors communicate over I2C (GP0/GP1). SPI flash uses GP16–GP19. UART debug output is available on GP8/GP9 (UART1) at 115200 baud.
 
-### Telemetry & Tracking
-- **Primary GPS:** BigRedBee 70 cm (915 MHz) in nosecone
-- **Backup GPS:** 2x Featherweight GPS modules in avionics bay
-- **Licensed Operator:** Jason Zhao (VE7ITB - Canadian Amateur Radio Basic with Honours)
-- **Live Video:** 2x DJI O3 Air Unit cameras with live streaming capability
+| Component | Part | Interface |
+|---|---|---|
+| Microcontroller | Raspberry Pi Pico H (RP2040) | — |
+| IMU | ST LSM9DS1 (accel / gyro / mag) | I2C |
+| Barometric Sensor | Bosch BMP390 (Adafruit breakout) | I2C |
+| Flash Storage | Winbond W25Q128 (Adafruit 5634 breakout) | SPI |
+| Power | 3× AA batteries in series → VSYS | — |
 
-### Payload Data Acquisition
-Multi-microcontroller system for monitoring the terrarium payload and flight dynamics(some details TBD):
+A humidity sensor (SHT30) was evaluated but deferred due to time constraints.
 
-**AdaCore/STM32 System (Primary Flight Data):**
-- STM32 Nucleo-G431KB development board
-- Adafruit BNO055 9-DOF IMU (acceleration, gyroscope, magnetometer)
-- Adafruit BMP580 temperature and pressure sensor
-- Possible terrarium environmental sensors integration
-- SD card module for data logging
-- Independent Molicel P45B battery with pull-pin switch
+### Firmware
 
-**Arduino System (GPS & Recovery):**
-- Arduino Uno R3 microcontroller
-- M10 u-blox GPS module
-- Recovery system monitoring
-- Parachute deployment event logging
-- Independent power supply
+The flight firmware is written entirely in Ada, built with [Alire](https://alire.ada.dev/) using the `rp2040_hal` crate (v2.7.0, JeremyGrosser). It is flashed via OpenOCD with a CMSIS-DAP debug probe.
 
-**Monitored Parameters:**
-- Temperature (external and internal to terrarium)
-- Barometric pressure
-- Humidity (if integrated with AdaCore system)
-- 9-axis motion data (3-axis acceleration, gyroscope, magnetometer)
-- GPS position and altitude
-- Recovery events (drogue and main deployment timestamps)
-- Timestamp for all measurements
+**Status at time of cancellation:**
+- All nine LSM9DS1 axes (accelerometer, gyroscope, magnetometer) confirmed working with live signed data
+- BMP390 raw pressure and temperature confirmed working
+- W25Q128 SPI flash confirmed working with verified erase/write/readback cycle
+- Unified `flight_logger.adb` combining all sensors with flash datalogging written and compiling
+- Flash readback/dump utility in progress
+- System not flight-tested
 
-**Data Storage:** All sensor data logged to SD card for post-flight analysis
+### Data Format
 
-## Payload Information
+Each logged sample is 28 bytes, fitting 9 samples per 256-byte flash page (4 bytes reserved for a page sequence number):
 
-The payload is a functional 3U CubeSat (10 cm × 10 cm × 30 cm) containing a hermetically sealed micro-terrarium with living plant life (moss, succulents, or basil). The experiment aims to correlate external launch environment conditions with the sealed terrarium environment to assess biological component survivability under launch conditions.
+| Field | Size | Description |
+|---|---|---|
+| Timestamp | 4 bytes | Microseconds since boot (`TIMERAWL`) |
+| Accel X/Y/Z | 6 bytes | Signed 16-bit raw ADC values |
+| Gyro X/Y/Z | 6 bytes | Signed 16-bit raw ADC values |
+| Mag X/Y/Z | 6 bytes | Signed 16-bit raw ADC values |
+| Pressure | 3 bytes | BMP390 raw 24-bit value |
+| Temperature | 3 bytes | BMP390 raw 24-bit value |
 
-**Payload Goals:**
-- Monitor impact of high-G acceleration on enclosed ecosystem
-- Track thermal environment during flight
-- Document vibrational and shock loads
-- Post-flight visual assessment of plant health
-- Correlation analysis between sensor data and flight timeline
+### STM32 Development Material
 
-## Software Components
+This repository also contains exploratory development material for the **STM32 Nucleo-G431KB**, used for learning and prototyping in the Ada/AdaCore embedded ecosystem. This work was not directly tied to the flight payload system and is not flight-ready.
 
-### Flight Control
-- Blue Raven firmware configuration for dual deployment
-- Apogee detection and drogue deployment
-- Barometric altitude-based main deployment at 1,500 ft AGL
+---
 
-### Data Acquisition (Arduino)(not confirmed)
-- Real-time sensor polling and timestamping
-- SD card data logging with error handling
-- Low-power operation during coast phase
-- Post-flight data retrieval interface
+## Development History
 
-### Ground Station
-- GPS tracking and mapping
-- Live video feed reception
-- Flight telemetry monitoring
+Early-cycle prototyping used Arduino (Uno R3) with standard Adafruit sensor libraries as a proof-of-concept for sensor integration and data logging. This work, done during initial team formation, established the sensor suite and data requirements before the architecture shifted.
 
-## Installation & Setup
+The final implementation moved away from Arduino/Adafruit entirely in favor of bare-metal Ada on the RP2040, with direct SVD register access for timing and SPI communication. This reflects a significant increase in technical depth relative to the original plan, trading higher-level convenience for a more precise understanding of the hardware.
 
-### Required Tools
-- Arduino IDE 1.8.x or 2.x
-- Blue Raven configuration software
-- Featherweight GPS configuration utility
+---
 
-### Arduino Libraries(not confirmed)
-```
-- Wire.h (I2C communication)
-- SPI.h (SD card interface)
-- SD.h (SD card operations)
-- Adafruit_BMP280.h (pressure/temp sensor)
-- Adafruit_BNO055.h (9-DOF IMU)
-- Adafruit_Sensor.h (unified sensor library)
-- TinyGPS++.h (GPS parsing)
+## Build & Flash
+
+### Prerequisites
+
+- [Alire](https://alire.ada.dev/) package manager
+- OpenOCD with CMSIS-DAP support
+- GNAT Ada toolchain (via Alire)
+
+### Build
+
+```bash
+alr build
 ```
 
-### Flashing Procedure
-1. Connect Arduino via USB
-2. Open payload_data_logger.ino in Arduino IDE
-3. Select board: Arduino Uno
-4. Select appropriate COM port
-5. Upload sketch
-6. Verify SD card initialization via serial monitor
+### Flash
 
-### Pre-Flight Configuration
-- Format SD card (FAT32)
-- Set deployment altitudes in Blue Raven units
-- Verify GPS lock before rail departure
-- Arm all circuits via pull-pin switches during final countdown
+```bash
+openocd -f interface/cmsis-dap.cfg -f target/rp2040.cfg \
+  -c "adapter speed 5000" \
+  -c "program bin/flight_logger.elf verify reset exit"
+```
 
-## Testing
+### Debug Output
 
-### Completed Tests
-- **Avionics Integration:** All electronic systems bench tested
-- **High-Temperature Testing:** Deployment reliability under extended heat exposure
-- **Battery Drain Test:** Performance verification under extreme conditions
-- **GPS Functionality:** Lock acquisition and tracking accuracy
-- **Camera Activation:** Video feed initiation and quality check
+```bash
+screen /dev/ttyUSBx 115200
+```
 
-### Planned Tests (December 2025 - February 2026)
-- Full system integration test
-- Ground ejection tests (primary and backup charges)
-- Subscale test flight for telemetry validation
-- Full-scale test launch (February 2026)
+---
 
-## Safety & Compliance
+## Key Hardware Notes
 
-- All recovery charges sized per NFPA 1127 and IREC guidelines
-- Dual redundancy on all flight-critical systems
-- Independent battery circuits prevent single-point failures
-- Pull-pin arming switches prevent accidental activation
-- Shock cord rated 5,600 lbs (3/8" Technora)
-- All personnel maintain safe distance during arming and launch
-- Mentor and FOR oversight for all launch operations
+A number of non-obvious hardware behaviors were encountered and resolved during development. These are documented here for anyone working with similar hardware in future cycles.
 
-## Flight Data
+- **I2C addressing:** The `rp2040_hal` HAL shifts addresses right by 1 internally; always pass 8-bit addresses (BMP390 = `0xEE` when SDO pulled high, LSM9DS1 accel/gyro = `0xD6`, mag = `0x3C`)
+- **GPIO configuration:** `Schmitt => True` is required on both SDA and SCL or the I2C bus will not drive
+- **SPI reads:** The HAL's `Receive` does not generate clock cycles; correct approach uses a `Transfer` procedure via direct `RP2040_SVD.SPI` register access, writing and reading one byte at a time in lockstep
+- **SPI Mode 0:** `Active_Low` is correct in `rp2040_hal` for CPOL=0 — the enum names the idle state
+- **Runtime:** Use `light-cortex-m0p`, not `light_tasking_rp2040` — the tasking runtime is incompatible with UART output
+- **`Integer_16'Image`:** Hangs on the bare-metal runtime; cast through `Integer_32` or handle manually via `Unsigned_16`
+- **UART output:** Bulk `Transmit` calls drop bytes; transmit one byte at a time with a short delay between calls
+- **Timestamp:** `RP.Device.Timer.Clock` does not exist; use `RP2040_SVD.TIMER.TIMER_Periph.TIMERAWL` directly
+- **I2C pin mapping:** GP0/GP1 with `I2CM_0` works reliably; GP2–GP5 cause `Configure` to hang; GP6/GP7 on `I2CM_1` returns `ERR_ERROR` on an empty bus
 
-Post-flight data analysis will include:
-- Altitude vs. time profile
-- Velocity and acceleration curves
-- GPS trajectory mapping
-- Payload environmental data correlation
-- Parachute deployment timing verification
-- Cross-range drift analysis (wind effects)
+---
 
-## Competition Results
+## Repository Structure
 
-*Section to be updated after IREC 2025 competition*
+```
+/
+├── pico_uart_demo/      # Early UART bringup and demo
+├── terrarium/           # STM32/AdaCore exploration and development material
+│   └── src/
+│       ├── svd/
+│       ├── blinky.adb
+│       ├── blinky_0.adb
+│       └── terrarium.adb
+├── terrarium_pico/      # Main RP2040 payload firmware (Ada)
+│   └── src/
+│       ├── flight_logger.adb   # Unified sensor + flash datalogging
+│       ├── i2c_sensors.adb     # LSM9DS1 and BMP390 drivers
+│       ├── spi_flash_test.adb  # W25Q128 erase/write/readback verification
+│       ├── i2c_demo.adb        # I2C bringup demo
+│       ├── blinky_demo.adb     # Basic bringup
+│       ├── uart_echo.adb       # UART bringup demo
+│       └── main.adb
+└── README.md
+```
 
-## Outreach
-
-Brown Rocketry is committed to promoting aerospace accessibility. Through the Pathways to Diversity Fund and partnerships with the Society of Hispanic Professional Engineers (SHPE) and Society of Women Engineers (SWE), we host workshops and collaborative launches to lower barriers for underrepresented groups in rocketry.
-
-## License
-
-MIT License - See LICENSE file for details
+---
 
 ## Acknowledgments
 
+- **Peter Tarle** for mentorship and launch operations oversight
+- **Olivier Henley** for embedded systems guidance and rocket integration oversight
 - **RIMRA** (Rhode Island Model Rocketry Association) for launch site access
-- **Peter Tarle** for mentorship and technical guidance
 - **Pathways to Diversity Fund** and **Hazeltine Engineering Grant** for financial support
-- **University of Rhode Island** for collaborative launch partnerships
-- **ESRA** for hosting IREC 2025
+- **ESRA** for hosting IREC
+
+---
 
 ## Contact
 
-- **Website:** https://sites.google.com/brown.edu/brown-rocketry/home
-- **Instagram:** @brownrocketry
+- **Website:** https://sites.google.com/brown.edu/brown-rocketry/home  
+- **Instagram:** @brownrocketry  
 - **Email:** ethan_m_kim@brown.edu
 
 ---
