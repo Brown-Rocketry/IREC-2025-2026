@@ -89,11 +89,6 @@ procedure Flash_Reader is
       return Integer_32'Image (S);
    end I32_Img;
 
-   function U32_Img (V : Unsigned_32) return String is
-   begin
-      return Integer_32'Image (Integer_32 (V));
-   end U32_Img;
-
    ----------------------------------------------------------------------------
    --  SPI low-level helpers
    ----------------------------------------------------------------------------
@@ -137,22 +132,37 @@ procedure Flash_Reader is
    --  Uses the 03h Read Data command (no dummy byte needed at low speed).
    ----------------------------------------------------------------------------
   procedure Read_Page (Addr : Natural) is
-   Blank : constant HAL.SPI.SPI_Data_8b (1 .. PAGE_SIZE) := (others => 0);
-   Cmd   : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (1 => CMD_READ_DATA);
-   Addr3 : constant HAL.SPI.SPI_Data_8b (1 .. 3) :=
-             (1 => HAL.UInt8 (Addr / 65536),
-              2 => HAL.UInt8 ((Addr / 256) mod 256),
-              3 => HAL.UInt8 (Addr mod 256));
-   Junk1 : HAL.SPI.SPI_Data_8b (1 .. 1);
-   Junk3 : HAL.SPI.SPI_Data_8b (1 .. 3);
-begin
-   CS_Low;
-   Transfer (Cmd,   Junk1);
-   Transfer (Addr3, Junk3);
-   Transfer (Blank, Page_Buf);
-   CS_High;
-end Read_Page;
+      Blank : constant HAL.SPI.SPI_Data_8b (1 .. PAGE_SIZE) := (others => 0);
+      Cmd : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (1 => HAL.UInt8 (CMD_READ_DATA));
+      Addr3 : constant HAL.SPI.SPI_Data_8b (1 .. 3) :=
+               (1 => HAL.UInt8 (Addr / 65536),
+               2 => HAL.UInt8 ((Addr / 256) mod 256),
+               3 => HAL.UInt8 (Addr mod 256));
+      Junk1 : HAL.SPI.SPI_Data_8b (1 .. 1);
+      Junk3 : HAL.SPI.SPI_Data_8b (1 .. 3);
+   begin
+      CS_Low;
+      Transfer (Cmd,   Junk1);
+      Transfer (Addr3, Junk3);
+      Transfer (Blank, Page_Buf);
+      CS_High;
+   end Read_Page;
 
+   function To_Hex (B : HAL.UInt8) return String is
+      Hex_Chars : constant String := "0123456789ABCDEF";
+      Hi     : constant Natural := Natural (Shift_Right (Unsigned_32 (B), 4) and 16#0F#);
+      Lo     : constant Natural := Natural (Unsigned_32 (B) and 16#0F#);
+   begin
+      return Hex_Chars (Hi + 1) & Hex_Chars (Lo + 1);
+   end To_Hex;
+
+   function U32_To_Hex (V : Unsigned_32) return String is
+   begin
+      return To_Hex (HAL.UInt8 (Shift_Right (V, 24) and 16#FF#)) &
+            To_Hex (HAL.UInt8 (Shift_Right (V, 16) and 16#FF#)) &
+            To_Hex (HAL.UInt8 (Shift_Right (V,  8) and 16#FF#)) &
+            To_Hex (HAL.UInt8 (V and 16#FF#));
+   end U32_To_Hex;
    ----------------------------------------------------------------------------
    --  Reassemble helpers (LSB first, matching Pack_U32 / Pack_I16 / Pack_U24)
    ----------------------------------------------------------------------------
@@ -186,7 +196,7 @@ end Read_Page;
    --  Sample_Idx is 0-based (0..8); byte offset = Sample_Idx * 28.
    ----------------------------------------------------------------------------
    procedure Print_Sample (Sample_Idx : Natural; Page_Idx : Natural) is
-      Base : constant Natural := Sample_Idx * SAMPLE_SIZE;
+   Base : constant Natural := Sample_Idx * SAMPLE_SIZE;
       TS   : constant Unsigned_32 := Unpack_U32 (Base);
       AX   : constant Unsigned_16 := Unpack_I16 (Base + 4);
       AY   : constant Unsigned_16 := Unpack_I16 (Base + 6);
@@ -201,20 +211,21 @@ end Read_Page;
       T    : constant Unsigned_32 := Unpack_U24 (Base + 25);
    begin
       pragma Unreferenced (Page_Idx);
-      Put_Line ("  S" & Integer'Image (Sample_Idx) &
-                "  TS:" & U32_Img (TS) &
-                "  AX:" & I32_Img (Unsigned_32 (AX)) &
-                " AY:"  & I32_Img (Unsigned_32 (AY)) &
-                " AZ:"  & I32_Img (Unsigned_32 (AZ)) &
-                "  GX:" & I32_Img (Unsigned_32 (GX)) &
-                " GY:"  & I32_Img (Unsigned_32 (GY)) &
-                " GZ:"  & I32_Img (Unsigned_32 (GZ)) &
-                "  MX:" & I32_Img (Unsigned_32 (MX)) &
-                " MY:"  & I32_Img (Unsigned_32 (MY)) &
-                " MZ:"  & I32_Img (Unsigned_32 (MZ)) &
-                "  P:"  & U32_Img (P) &
-                " T:"   & U32_Img (T));
+      Put_Line ("  S" & Integer'Image (Sample_Idx) & " TS:" & U32_To_Hex (TS));
+      Put_Line ("    AX:" & To_Hex (HAL.UInt8 (Shift_Right (Unsigned_32 (AX), 8))) & To_Hex (HAL.UInt8 (Unsigned_32 (AX) and 16#FF#)) &
+               " AY:"    & To_Hex (HAL.UInt8 (Shift_Right (Unsigned_32 (AY), 8))) & To_Hex (HAL.UInt8 (Unsigned_32 (AY) and 16#FF#)) &
+               " AZ:"    & To_Hex (HAL.UInt8 (Shift_Right (Unsigned_32 (AZ), 8))) & To_Hex (HAL.UInt8 (Unsigned_32 (AZ) and 16#FF#)));
+      Put_Line ("    GX:" & To_Hex (HAL.UInt8 (Shift_Right (Unsigned_32 (GX), 8))) & To_Hex (HAL.UInt8 (Unsigned_32 (GX) and 16#FF#)) &
+               " GY:"    & To_Hex (HAL.UInt8 (Shift_Right (Unsigned_32 (GY), 8))) & To_Hex (HAL.UInt8 (Unsigned_32 (GY) and 16#FF#)) &
+               " GZ:"    & To_Hex (HAL.UInt8 (Shift_Right (Unsigned_32 (GZ), 8))) & To_Hex (HAL.UInt8 (Unsigned_32 (GZ) and 16#FF#)));
+      Put_Line ("    MX:" & To_Hex (HAL.UInt8 (Shift_Right (Unsigned_32 (MX), 8))) & To_Hex (HAL.UInt8 (Unsigned_32 (MX) and 16#FF#)) &
+               " MY:"    & To_Hex (HAL.UInt8 (Shift_Right (Unsigned_32 (MY), 8))) & To_Hex (HAL.UInt8 (Unsigned_32 (MY) and 16#FF#)) &
+               " MZ:"    & To_Hex (HAL.UInt8 (Shift_Right (Unsigned_32 (MZ), 8))) & To_Hex (HAL.UInt8 (Unsigned_32 (MZ) and 16#FF#)));
+      Put_Line ("    P:"  & U32_To_Hex (P) & " T:" & U32_To_Hex (T));
    end Print_Sample;
+
+
+-- ... same pattern for AZ, GX, GY, GZ, MX, MY, MZ
 
 begin
    ----------------------------------------------------------------------------
@@ -350,7 +361,7 @@ begin
                 Unsigned_32 (Page_Buf (256)) * 16777216;
 
          Put_Line ("PAGE" & Integer'Image (Page_Idx) &
-                   "  (seq=" & U32_Img (Seq) & ")");
+                   "  (seq=" & U32_To_Hex (Seq) & ")");
 
          -- Print all 9 samples in this page
          for S in 0 .. SAMPLES_PER_PAGE - 1 loop
