@@ -78,10 +78,18 @@ procedure Flight_Logger is
    OUT_X_L_XL   : constant UInt8 := 16#28#;
    OUT_X_L_G    : constant UInt8 := 16#18#;
    OUT_X_L_M    : constant UInt8 := 16#28#;
-   ODR_XL       : constant UInt8 := 16#60#;
-   ODR_G        : constant UInt8 := 16#68#;
-   ODR_M1       : constant UInt8 := 16#10#;
+   --  ODR_XL       : constant UInt8 := 16#60#;
+   --  ODR_G        : constant UInt8 := 16#68#;
+   --  ODR_M1       : constant UInt8 := 16#10#;
+   --  ODR_M3       : constant UInt8 := 16#00#;
+   ODR_XL       : constant UInt8 := 2#01101000#;
+   --  (ODR 119Hz, FS ±16g)
+   ODR_G        : constant UInt8 := 2#01111000#;
+   --  (ODR 119Hz, FS ±2000dps)
+   ODR_M1       : constant UInt8 := 2#11110000#;
+   --  (temp comp, XY ultra-high perf, ODR 10Hz)
    ODR_M3       : constant UInt8 := 16#00#;
+   -- (continuous mode, already correct)
 
    ----------------------------------------------------------------------------
    --  BMP390 registers
