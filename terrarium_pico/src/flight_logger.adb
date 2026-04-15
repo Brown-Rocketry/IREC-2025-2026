@@ -167,6 +167,7 @@ procedure Flight_Logger is
    procedure CS_High is
    begin
       CS_Pin.Set;
+      RP.Device.Timer.Delay_Milliseconds (1);
    end CS_High;
 
    -- Full-duplex byte-by-byte transfer via SVD registers.
@@ -273,9 +274,9 @@ procedure Flight_Logger is
    --  Erase one 4 KB sector at byte address Addr (must be sector-aligned).
    --  Uses Transfer for command and address so CS_High is always safe.
    ----------------------------------------------------------------------------
-   procedure Erase_Sector is
+   procedure Erase_Sector (Addr : Natural) is
       Cmd   : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (1 => HAL.UInt8 (CMD_SECTOR_ERASE));
-      Addr3 : constant HAL.SPI.SPI_Data_8b (1 .. 3) := (1 => 0, 2 => 0, 3 => 0);
+      Addr3 : constant HAL.SPI.SPI_Data_8b (1 .. 3) := Addr_Bytes (Addr);
       Junk1 : HAL.SPI.SPI_Data_8b (1 .. 1);
       Junk3 : HAL.SPI.SPI_Data_8b (1 .. 3);
    begin
@@ -432,8 +433,8 @@ procedure Flight_Logger is
       Pack_U32 (Page_Num, 252);
 
       if Write_Addr mod SECTOR_SIZE = 0 then
-         --  Erase_Sector (Write_Addr);
-         Erase_Sector;
+         Erase_Sector (Write_Addr);
+         --  Erase_Sector;
          Put_Line ("Erased sector at " & Write_Addr'Image);
       end if;
 
@@ -499,6 +500,7 @@ begin
    MOSI_Pin.Configure (Output, Floating, RP.GPIO.SPI);
    CS_Pin.Configure   (Output, Floating);
    CS_High;
+   RP.Device.Timer.Delay_Milliseconds (10);
 
    SPI_Port.Configure
      (Config =>
@@ -542,16 +544,16 @@ begin
    SCL.Configure (Output, Pull_Up, RP.GPIO.I2C, Schmitt => True);
    RP.Device.I2CM_0.Configure (Baudrate => 100_000);
    Put_Line ("I2C ready");
-
+   
    ----------------------------------------------------------------------------
    --  Sensors disabled until flash write path is verified
    ----------------------------------------------------------------------------
-   --  Enable_Sensor (Addr_AG,  CTRL_REG6_XL, ODR_XL,  "Accel");
-   --  Enable_Sensor (Addr_AG,  CTRL_REG1_G,  ODR_G,   "Gyro");
-   --  Enable_Sensor (Addr_Mag, CTRL_REG1_M,  ODR_M1,  "Mag mode");
-   --  Enable_Sensor (Addr_Mag, CTRL_REG3_M,  ODR_M3,  "Mag power");
-   --  Enable_Sensor (Addr_BMP, CTRL_PWR_BMP, SETTINGS_BMP, "BMP390");
-   --  Put_Line ("Sensors enabled");
+   Enable_Sensor (Addr_AG,  CTRL_REG6_XL, ODR_XL,  "Accel");
+   Enable_Sensor (Addr_AG,  CTRL_REG1_G,  ODR_G,   "Gyro");
+   Enable_Sensor (Addr_Mag, CTRL_REG1_M,  ODR_M1,  "Mag mode");
+   Enable_Sensor (Addr_Mag, CTRL_REG3_M,  ODR_M3,  "Mag power");
+   Enable_Sensor (Addr_BMP, CTRL_PWR_BMP, SETTINGS_BMP, "BMP390");
+   Put_Line ("Sensors enabled");
 
    ----------------------------------------------------------------------------
    --  Main logging loop
@@ -616,6 +618,7 @@ begin
          Sample_Idx := Sample_Idx + 1;
 
          if Sample_Idx = SAMPLES_PER_PAGE then
+            Put_Line ("Before Flush");
             Flush_Page;
          end if;
       end;

@@ -372,4 +372,3 @@ begin
    loop null; end loop;
 
 end Flash_Reader;
--- last written page is 25088 for current write as of 4/13/26
