@@ -28,6 +28,61 @@ See the [top-level README](../README.md) for project context, vehicle specs, and
 | SPI SCK | GP18 |
 | SPI MOSI | GP19 |
 
+Legend: `[*]` used now, `[P]` required power/ground, `[R]` reserved/non-GPIO, `[ ]` free.
+
+```text
+Pico / Pico H (RP2040) — full layout for this firmware
+                         ┌──────────[USB]──────────┐
+[*] GP0  (I2C SDA)   1 ──┤                         ├── 40 VBUS      [ ] USB 5V board power path
+[*] GP1  (I2C SCL)   2 ──┤                         ├── 39 VSYS      [ ] External board power input (alternative)
+[P] GND              3 ──┤                         ├── 38 GND       [P] Common ground
+[ ] GP2              4 ──┤                         ├── 37 3V3_EN    [ ] Regulator enable (leave high/open)
+[ ] GP3              5 ──┤                         ├── 36 3V3_OUT   [P] 3.3V rail to sensors + flash
+[ ] GP4              6 ──┤                         ├── 35 ADC_VREF  [R] Analog reference (unused)
+[ ] GP5              7 ──┤                         ├── 34 GP28/ADC2 [ ] Free GPIO/ADC
+[P] GND              8 ──┤                         ├── 33 AGND      [R] Analog ground (unused)
+[ ] GP6              9 ──┤                         ├── 32 GP27/ADC1 [ ] Free GPIO/ADC
+[ ] GP7             10 ──┤                         ├── 31 GP26/ADC0 [ ] Free GPIO/ADC
+[*] GP8  (UART TX)  11 ──┤                         ├── 30 RUN       [R] Reset control (optional)
+[*] GP9  (UART RX)  12 ──┤                         ├── 29 GP22      [ ] Free GPIO
+[P] GND             13 ──┤                         ├── 28 GND       [P] Extra ground point
+[ ] GP10            14 ──┤                         ├── 27 GP21      [ ] Free GPIO
+[ ] GP11            15 ──┤                         ├── 26 GP20      [ ] Free GPIO
+[ ] GP12            16 ──┤                         ├── 25 GP19      [*] SPI MOSI -> flash DI - IO1
+[ ] GP13            17 ──┤                         ├── 24 GP18      [*] SPI SCK  -> flash CLK
+[P] GND             18 ──┤                         ├── 23 GND       [P] Recommended flash ground
+[ ] GP14            19 ──┤                         ├── 22 GP17      [*] SPI CS   -> flash CS
+[ ] GP15            20 ──┤                         ├── 21 GP16      [*] SPI MISO -> flash DO - IO0
+                         └─────────────────────────┘
+
+SWD pads (Pico H): SWCLK / SWDIO / GND (optional for OpenOCD programming/debug)
+```
+
+```text
+Required wiring (practical checklist)
+
+Power:
+  Pico 3V3_OUT -----------------------> LSM9DS1 VCC, BMP390 VCC/VIN, W25Q128 VCC/VIN
+  Pico GND ---------------------------> LSM9DS1 GND, BMP390 GND, W25Q128 GND
+  Pico board supply ------------------> either USB (VBUS path) OR external VSYS
+
+I2C shared bus (both sensors on same wires):
+  GP0 (SDA) --------------------------> LSM9DS1 SDA + BMP390 SDA
+  GP1 (SCL) --------------------------> LSM9DS1 SCL + BMP390 SCL
+
+SPI flash:
+  GP16 (MISO) ------------------------> W25Q128 DO
+  GP19 (MOSI) ------------------------> W25Q128 DI
+  GP18 (SCK)  ------------------------> W25Q128 CLK
+  GP17 (CS)   ------------------------> W25Q128 CS
+
+Optional UART debug:
+  GP8 (TX) ---------------------------> USB-UART RX
+  GP9 (RX) <--------------------------- USB-UART TX
+  GND -------------------------------- USB-UART GND
+```
+
+Pins normally left alone in this build: `RUN`, `3V3_EN`, `ADC_VREF`, `AGND`.
 ---
 
 ## Firmware Overview
@@ -98,7 +153,29 @@ At 10 Hz (100 ms polling interval) the chip holds approximately **18.2 hours** o
 
 - [Alire](https://alire.ada.dev/) package manager
 - OpenOCD with CMSIS-DAP support
+- A **Pico Probe** (or Raspberry Pi Debug Probe) for SWD programming/debugging
 - GNAT Ada ARM cross-compiler (fetched automatically via Alire)
+
+### Programming / Debug Wiring (Pico Probe + OpenOCD)
+
+Use the white-ish female SWD cable from the probe kit to connect the probe to the target board.
+
+Connect these three signals:
+
+| Pico Probe side | Target Pico H side | Notes |
+|---|---|---|
+| SWCLK | SWCLK pad/pin | Clock line |
+| SWDIO | SWDIO pad/pin | Data line |
+| GND | GND | Mandatory common ground |
+
+If you are using a second Pico flashed as `picoprobe`, its SWD pins are typically:
+
+- `GP2` = SWCLK
+- `GP3` = SWDIO
+- `GND` = GND
+
+On the target Pico H, use the SWD pads (`SWCLK`, `SWDIO`) plus any nearby ground.
+This is the connection used by the OpenOCD command below.
 
 ### Build
 
@@ -119,7 +196,17 @@ The `-c "adapter speed 5000"` flag is important — without it OpenOCD defaults 
 
 ### Debug Output
 
-Connect a serial terminal at 115200 baud on GP8/GP9 (UART1):
+Connect a serial terminal at 115200 baud on GP8/GP9 (UART1).
+
+Recommended UART wire mapping (common black/yellow/orange USB-UART harness):
+
+- **Black**  `GND`
+- **Yellow** (adapter RX)  `GP8` (Pico TX)
+- **Orange** (adapter TX)  `GP9` (Pico RX)
+
+If your adapter uses a different color convention, follow the signal names (`TX`, `RX`, `GND`) rather than color.
+
+Then open the terminal:
 
 ```bash
 screen /dev/ttyUSBx 115200
