@@ -234,12 +234,12 @@ procedure Flight_Logger is
          Transfer (Dummy, Busy_Buf);   -- clock one dummy, receive status byte
          CS_High;
          S := Busy_Buf (1);
-         if Count mod 10 = 0 then
-            Put_Line ("WIP #" & Count'Image &
-                      " S="   & Integer'Image (Integer (S)) &
-                      " WIP=" & Integer'Image (Integer (S and 1)) &
-                      " WEL=" & Integer'Image (Integer ((S / 2) and 1)));
-         end if;
+         --  if Count mod 10 = 0 then
+         --     Put_Line ("WIP #" & Count'Image &
+         --               " S="   & Integer'Image (Integer (S)) &
+         --               " WIP=" & Integer'Image (Integer (S and 1)) &
+         --               " WEL=" & Integer'Image (Integer ((S / 2) and 1)));
+         --  end if;
          exit when (S and 16#01#) = 0;
          Count := Count + 1;
          if Count > 1000 then
@@ -563,6 +563,41 @@ begin
    Enable_Sensor (Addr_BMP, CTRL_PWR_BMP, SETTINGS_BMP, "BMP390");
    Put_Line ("Sensors enabled");
 
+
+   -- Scan for first unwritten page to resume after power cycle
+   declare
+      Blank : constant HAL.SPI.SPI_Data_8b (1 .. PAGE_SIZE) := (others => 0);
+      Cmd   : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (1 => 16#03#);
+      Junk1 : HAL.SPI.SPI_Data_8b (1 .. 1);
+      Junk3 : HAL.SPI.SPI_Data_8b (1 .. 3);
+      Addr3 : HAL.SPI.SPI_Data_8b (1 .. 3);
+   begin
+      loop
+         Addr3 := (1 => HAL.UInt8 (Write_Addr / 65536),
+                  2 => HAL.UInt8 ((Write_Addr / 256) mod 256),
+                  3 => HAL.UInt8 (Write_Addr mod 256));
+         CS_Low;
+         Transfer (Cmd,   Junk1);
+         Transfer (Addr3, Junk3);
+         Transfer (Blank, Page_Buf);
+         CS_High;
+
+         exit when Page_Buf (253) = 16#FF# and then
+                  Page_Buf (254) = 16#FF# and then
+                  Page_Buf (255) = 16#FF# and then
+                  Page_Buf (256) = 16#FF#;
+
+         Page_Num   := Page_Num + 1;
+         Write_Addr := Write_Addr + PAGE_SIZE;
+
+         if Write_Addr > MAX_PAGE * PAGE_SIZE then
+            Put_Line ("Flash full - halting");
+            loop null; end loop;
+         end if;
+      end loop;
+      Put_Line ("Resuming at page" & Page_Num'Image);
+   end;
+
    ----------------------------------------------------------------------------
    --  Main logging loop
    ----------------------------------------------------------------------------
@@ -626,12 +661,12 @@ begin
          Sample_Idx := Sample_Idx + 1;
 
          if Sample_Idx = SAMPLES_PER_PAGE then
-            Put_Line ("Before Flush");
+            --  Put_Line ("Before Flush");
             Flush_Page;
          end if;
       end;
 
-      RP.Device.Timer.Delay_Milliseconds (100);
+      RP.Device.Timer.Delay_Milliseconds (8);
       Pico.LED.Toggle;
    end loop;
 
