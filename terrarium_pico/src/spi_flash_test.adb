@@ -191,8 +191,9 @@ procedure SPI_Flash_Test is
 
    
    --  Test data: just 0..15 for easy visual verification over UART
-   Write_Buf : constant HAL.SPI.SPI_Data_8b (1 .. 16) :=
-     (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16);
+   --  Write_Buf : constant HAL.SPI.SPI_Data_8b (1 .. 16) :=
+   --    (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16);
+   Write_Buf : HAL.SPI.SPI_Data_8b (1 .. 256);
    Read_Buf  : HAL.SPI.SPI_Data_8b (1 .. 16);
    Pass      : Boolean := True;
 
@@ -202,6 +203,10 @@ begin
    RP.Device.Timer.Enable;
    RP.GPIO.Enable;
    Pico.LED.Configure (Output);
+
+   for I in Write_Buf'Range loop
+      Write_Buf (I) := HAL.UInt8 ((I - 1) mod 256);
+   end loop;
 
    UART_TX.Configure (Output, Pull_Up, RP.GPIO.UART);
    UART_RX.Configure (Input, Floating, RP.GPIO.UART);
@@ -268,7 +273,7 @@ begin
 
    --  Step 3: verify
    Put_Line ("Read-Write Values:");
-   for I in Write_Buf'Range loop
+   for I in Read_Buf'Range loop
       if Write_Buf (I) /= Read_Buf (I) then
          declare
             W : constant HAL.UInt8 := Write_Buf (I);

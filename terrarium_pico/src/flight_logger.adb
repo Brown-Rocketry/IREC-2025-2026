@@ -17,7 +17,7 @@
 --   25-27: Temperature raw (24-bit, LSB first)
 --
 -- Page layout (256 bytes):
---   Bytes 0-251:   9 samples × 28 bytes = 252 bytes
+--   Bytes 0-251:   9 samples x 28 bytes = 252 bytes
 --   Bytes 252-255: Page sequence number (Unsigned_32, LSB first)
 
 with RP.SPI;         use RP.SPI;
@@ -115,17 +115,19 @@ procedure Flight_Logger is
    PAGES_PER_SECTOR : constant := 16;
    MAX_PAGE         : constant := 65_535;
 
+   TEST_ADDR : constant := 16#000000#;
+
    ----------------------------------------------------------------------------
    --  State
    ----------------------------------------------------------------------------
-   SPI_Stat    : HAL.SPI.SPI_Status;
-   Busy_Buf    : HAL.SPI.SPI_Data_8b (1 .. 1);
+   SPI_Stat : HAL.SPI.SPI_Status;
+   Busy_Buf : HAL.SPI.SPI_Data_8b (1 .. 1);
 
    -- Page buffer: 252 bytes of samples + 4 bytes sequence number
    Page_Buf    : HAL.SPI.SPI_Data_8b (1 .. PAGE_SIZE) := (others => 0);
-   Sample_Idx  : Natural := 0;   -- 0..8, samples written into current page
+   Sample_Idx  : Natural := 0;      -- 0..8, samples written into current page
    Page_Num    : Unsigned_32 := 0;  -- sequence number stamped into each page
-   Write_Addr  : Natural := 0;   -- byte address in flash for next page write
+   Write_Addr  : Natural := 0;      -- byte address in flash for next page write
 
    ----------------------------------------------------------------------------
    --  UART helpers
@@ -143,11 +145,23 @@ procedure Flight_Logger is
    end Put_Line;
 
    ----------------------------------------------------------------------------
-   --  SPI low-level helpers  (identical to spi_flash_test.adb)
+   --  SPI low-level helpers
+   --
+   --  All flash transactions use Transfer exclusively — never Send_Byte or
+   --  Send_Address (HAL Transmit) — so that CS_High is always called after
+   --  the last byte has fully clocked out.  HAL Transmit returns as soon as
+   --  bytes are queued in the TX FIFO, which can cause CS_High to fire while
+   --  bytes are still in flight, producing truncated transactions that the
+   --  flash chip silently rejects.
+   --
+   --  Transfer is synchronous: it waits for TNF before writing each byte and
+   --  waits for RNE before reading it back, so by the time it returns every
+   --  bit has been clocked on the wire.
    ----------------------------------------------------------------------------
    procedure CS_Low is
    begin
       CS_Pin.Clear;
+      RP.Device.Timer.Delay_Milliseconds (1);
    end CS_Low;
 
    procedure CS_High is
@@ -156,7 +170,7 @@ procedure Flight_Logger is
    end CS_High;
 
    -- Full-duplex byte-by-byte transfer via SVD registers.
-   -- Sends TX(i), immediately reads back RX(i) before moving on.
+   -- Fully synchronous: each byte is completely clocked before moving on.
    procedure Transfer (TX : HAL.SPI.SPI_Data_8b;
                        RX : out HAL.SPI.SPI_Data_8b) is
       Periph : RP2040_SVD.SPI.SPI_Peripheral renames SPI_Port.Periph.all;
@@ -169,74 +183,126 @@ procedure Flight_Logger is
       end loop;
    end Transfer;
 
-   procedure Send_Byte (Cmd : HAL.UInt8) is
-      Buf : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (1 => Cmd);
-   begin
-      SPI_Port.Transmit (Buf, SPI_Stat);
-   end Send_Byte;
+   --  procedure Send_Byte (Cmd : HAL.UInt8) is
+   --     Buf : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (1 => Cmd);
+   --  begin
+   --     SPI_Port.Transmit (Buf, SPI_Stat);  -- was Status
+   --  end Send_Byte;
 
-   procedure Send_Address (Addr : Natural) is
-      Buf : constant HAL.SPI.SPI_Data_8b (1 .. 3) :=
-        (1 => HAL.UInt8 (Addr / 65536),
-         2 => HAL.UInt8 ((Addr / 256) mod 256),
-         3 => HAL.UInt8 (Addr mod 256));
-   begin
-      SPI_Port.Transmit (Buf, SPI_Stat);
-   end Send_Address;
+   --  procedure Send_Address (Addr : Natural) is
+   --     Buf : constant HAL.SPI.SPI_Data_8b (1 .. 3) :=
+   --     (1 => HAL.UInt8 (Addr / 65536),
+   --        2 => HAL.UInt8 ((Addr / 256) mod 256),
+   --        3 => HAL.UInt8 (Addr mod 256));
+   --  begin
+   --     SPI_Port.Transmit (Buf, SPI_Stat);  -- was Status
+   --  end Send_Address;
 
+   -- Convenience: build a 3-byte address array for Transfer calls.
+   function Addr_Bytes (Addr : Natural) return HAL.SPI.SPI_Data_8b is
+      Result : HAL.SPI.SPI_Data_8b (1 .. 3);
+   begin
+      Result (1) := HAL.UInt8 (Addr / 65536);
+      Result (2) := HAL.UInt8 ((Addr / 256) mod 256);
+      Result (3) := HAL.UInt8 (Addr mod 256);
+      return Result;
+   end Addr_Bytes;
+
+   ----------------------------------------------------------------------------
+   --  Wait for the WIP (Write In Progress) bit to clear.
+   --  Uses Transfer throughout so the status read is also fully synchronous.
+   ----------------------------------------------------------------------------
    procedure Wait_Until_Ready is
       S     : HAL.UInt8;
       Count : Natural := 0;
+      Cmd   : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (1 => HAL.UInt8 (CMD_READ_STATUS));
       Dummy : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (others => 0);
+      Junk  : HAL.SPI.SPI_Data_8b (1 .. 1);
    begin
       loop
          CS_Low;
-         Send_Byte (CMD_READ_STATUS);
-         -- CMD_READ_STATUS fills the RX FIFO with a junk byte; read it out
-         -- via Transfer so the FIFO stays clean before we clock the status.
-         declare Junk : HAL.SPI.SPI_Data_8b (1 .. 1); begin
-            Transfer (Dummy, Junk);
-         end;
-         -- Now clock one more dummy byte to get the actual status byte back
-         Transfer (Dummy, Busy_Buf);
+         Transfer (Cmd,   Junk);       -- send READ_STATUS, discard echo
+         Transfer (Dummy, Busy_Buf);   -- clock one dummy, receive status byte
          CS_High;
          S := Busy_Buf (1);
+         if Count mod 10 = 0 then
+            Put_Line ("WIP #" & Count'Image &
+                      " S="   & Integer'Image (Integer (S)) &
+                      " WIP=" & Integer'Image (Integer (S and 1)) &
+                      " WEL=" & Integer'Image (Integer ((S / 2) and 1)));
+         end if;
          exit when (S and 16#01#) = 0;
          Count := Count + 1;
-         if Count > 5000 then
-            Put_Line ("FLASH TIMEOUT - WIP never cleared");
+         if Count > 1000 then
+            Put_Line ("TIMEOUT - chip not responding");
             return;
          end if;
       end loop;
    end Wait_Until_Ready;
 
    procedure Write_Enable is
+      Cmd  : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (1 => HAL.UInt8 (CMD_WRITE_ENABLE));
+      Junk : HAL.SPI.SPI_Data_8b (1 .. 1);
    begin
       CS_Low;
-      Send_Byte (CMD_WRITE_ENABLE);
+      Transfer (Cmd, Junk);
       CS_High;
    end Write_Enable;
 
-   -- Erase one 4 KB sector at byte address Addr (must be sector-aligned).
-   procedure Erase_Sector (Addr : Natural) is
+   ----------------------------------------------------------------------------
+   --  Write Enable — must precede every erase or program command.
+   --  Uses Transfer so CS_High only fires after 0x06 has fully clocked out.
+   ----------------------------------------------------------------------------
+   procedure Write_Page (Data : HAL.SPI.SPI_Data_8b) is
+      Cmd   : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (1 => HAL.UInt8 (CMD_PAGE_PROGRAM));
+      Addr3 : constant HAL.SPI.SPI_Data_8b (1 .. 3) := (1 => 0, 2 => 0, 3 => 0);
+      Junk1 : HAL.SPI.SPI_Data_8b (1 .. 1);
+      Junk3 : HAL.SPI.SPI_Data_8b (1 .. 3);
+      JunkD : HAL.SPI.SPI_Data_8b (1 .. PAGE_SIZE);
    begin
       Write_Enable;
       CS_Low;
-      Send_Byte (CMD_SECTOR_ERASE);
-      Send_Address (Addr);
+      Transfer (Cmd,   Junk1);
+      Transfer (Addr3, Junk3);
+      Transfer (Data,  JunkD);
+      CS_High;
+      Wait_Until_Ready;
+   end Write_Page;
+
+   ----------------------------------------------------------------------------
+   --  Erase one 4 KB sector at byte address Addr (must be sector-aligned).
+   --  Uses Transfer for command and address so CS_High is always safe.
+   ----------------------------------------------------------------------------
+   procedure Erase_Sector is
+      Cmd   : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (1 => HAL.UInt8 (CMD_SECTOR_ERASE));
+      Addr3 : constant HAL.SPI.SPI_Data_8b (1 .. 3) := (1 => 0, 2 => 0, 3 => 0);
+      Junk1 : HAL.SPI.SPI_Data_8b (1 .. 1);
+      Junk3 : HAL.SPI.SPI_Data_8b (1 .. 3);
+   begin
+      Write_Enable;
+      CS_Low;
+      Transfer (Cmd,   Junk1);
+      Transfer (Addr3, Junk3);
       CS_High;
       Wait_Until_Ready;
    end Erase_Sector;
 
-   -- Write exactly 256 bytes to the flash page at byte address Addr.
-   procedure Write_Page_To_Flash (Data : HAL.SPI.SPI_Data_8b;
-                                  Addr : Natural) is
+   ----------------------------------------------------------------------------
+   --  Write exactly 256 bytes to the flash page at byte address Addr.
+   --  Uses Transfer for command, address, and data payload.
+   ----------------------------------------------------------------------------
+   procedure Write_Page_To_Flash (Data : HAL.SPI.SPI_Data_8b; Addr : Natural) is
+      Cmd   : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (1 => HAL.UInt8 (CMD_PAGE_PROGRAM));
+      Addr3 : constant HAL.SPI.SPI_Data_8b (1 .. 3) := Addr_Bytes (Addr);
+      Junk1 : HAL.SPI.SPI_Data_8b (1 .. 1);
+      Junk3 : HAL.SPI.SPI_Data_8b (1 .. 3);
+      JunkD : HAL.SPI.SPI_Data_8b (1 .. PAGE_SIZE);
    begin
       Write_Enable;
       CS_Low;
-      Send_Byte (CMD_PAGE_PROGRAM);
-      Send_Address (Addr);
-      SPI_Port.Transmit (Data, SPI_Stat);
+      Transfer (Cmd,  Junk1);
+      Transfer (Addr3, Junk3);
+      Transfer (Data, JunkD);
       CS_High;
       Wait_Until_Ready;
    end Write_Page_To_Flash;
@@ -264,7 +330,6 @@ procedure Flight_Logger is
       end if;
    end Enable_Sensor;
 
-   -- Read 6 bytes from an LSM9DS1 sub-device and return as raw I2C_Data.
    procedure Read_IMU_Raw (Addr     : HAL.I2C.I2C_Address;
                            Mem_Addr : UInt8;
                            Data     : out I2C_Data;
@@ -282,7 +347,6 @@ procedure Flight_Logger is
       Ok := (Stat = HAL.I2C.Ok);
    end Read_IMU_Raw;
 
-   -- Read 6 bytes from BMP390 (3 pressure + 3 temperature).
    procedure Read_BMP_Raw (Data : out I2C_Data;
                            Ok   : out Boolean) is
       Port : RP.I2C_Master.I2C_Master_Port renames RP.Device.I2CM_0;
@@ -299,16 +363,15 @@ procedure Flight_Logger is
    end Read_BMP_Raw;
 
    ----------------------------------------------------------------------------
-   --  Timestamp helper
-   --  Read TIMERAWL: lower 32 bits of RP2040 hardware microsecond counter.
-   --  No latching side effects. Wraps ~71 min.
+   --  Timestamp: lower 32 bits of RP2040 hardware microsecond counter.
+   ----------------------------------------------------------------------------
    function Get_Timestamp return Unsigned_32 is
    begin
       return Unsigned_32 (RP2040_SVD.TIMER.TIMER_Periph.TIMERAWL);
    end Get_Timestamp;
 
    ----------------------------------------------------------------------------
-   --  Pack a Unsigned_32 into Page_Buf at byte offset Base (LSB first).
+   --  Packing helpers — write into Page_Buf at 1-based Ada index Base+1.
    ----------------------------------------------------------------------------
    procedure Pack_U32 (Val : Unsigned_32; Base : Natural) is
    begin
@@ -318,15 +381,12 @@ procedure Flight_Logger is
       Page_Buf (Base + 4) := HAL.UInt8 (Shift_Right (Val, 24) and 16#FF#);
    end Pack_U32;
 
-   -- Pack a signed 16-bit value as two bytes (LSB first).
-   -- We receive it as Unsigned_16 from the two's-complement raw read.
    procedure Pack_I16 (Val : Unsigned_16; Base : Natural) is
    begin
       Page_Buf (Base + 1) := HAL.UInt8 (Val and 16#FF#);
       Page_Buf (Base + 2) := HAL.UInt8 (Shift_Right (Val, 8) and 16#FF#);
    end Pack_I16;
 
-   -- Pack a 24-bit raw sensor value (3 bytes, LSB first).
    procedure Pack_U24 (Val : Unsigned_32; Base : Natural) is
    begin
       Page_Buf (Base + 1) := HAL.UInt8 (Val and 16#FF#);
@@ -334,62 +394,57 @@ procedure Flight_Logger is
       Page_Buf (Base + 3) := HAL.UInt8 (Shift_Right (Val, 16) and 16#FF#);
    end Pack_U24;
 
-   ----------------------------------------------------------------------------
-   --  Build one 28-byte sample into Page_Buf at the slot for Sample_Idx.
-   --  Slot byte offset = Sample_Idx * SAMPLE_SIZE  (0-indexed, so slot 0
-   --  lives at bytes 1..28 in Ada 1-based array, i.e. offset 0 → index 1).
-   ----------------------------------------------------------------------------
-   procedure Pack_Sample (TS       : Unsigned_32;
+   procedure Pack_Sample (TS         : Unsigned_32;
                           AX, AY, AZ : Unsigned_16;
                           GX, GY, GZ : Unsigned_16;
                           MX, MY, MZ : Unsigned_16;
-                          Press    : Unsigned_32;
-                          Temp     : Unsigned_32) is
+                          Press      : Unsigned_32;
+                          Temp       : Unsigned_32) is
       Base : constant Natural := Sample_Idx * SAMPLE_SIZE;
-      -- Base is a byte offset; Ada array is 1-based, so index = Base + 1 etc.
-      -- Pack_U32/I16/U24 all add 1 internally, so pass Base directly.
    begin
-      Pack_U32 (TS,    Base);       -- bytes 0-3
-      Pack_I16 (AX,    Base + 4);   -- bytes 4-5
-      Pack_I16 (AY,    Base + 6);   -- bytes 6-7
-      Pack_I16 (AZ,    Base + 8);   -- bytes 8-9
-      Pack_I16 (GX,    Base + 10);  -- bytes 10-11
-      Pack_I16 (GY,    Base + 12);  -- bytes 12-13
-      Pack_I16 (GZ,    Base + 14);  -- bytes 14-15
-      Pack_I16 (MX,    Base + 16);  -- bytes 16-17
-      Pack_I16 (MY,    Base + 18);  -- bytes 18-19
-      Pack_I16 (MZ,    Base + 20);  -- bytes 20-21
-      Pack_U24 (Press, Base + 22);  -- bytes 22-24
-      Pack_U24 (Temp,  Base + 25);  -- bytes 25-27
+      Pack_U32 (TS,    Base);
+      --  declare
+      --     B0 : constant HAL.UInt8 := Page_Buf (253);
+      --     B1 : constant HAL.UInt8 := Page_Buf (254);
+      --     B2 : constant HAL.UInt8 := Page_Buf (255);
+      --     B3 : constant HAL.UInt8 := Page_Buf (256);
+      --  begin
+      --     Put_Line ("SeqBytes: " & B0'Image & " " & B1'Image & " " & B2'Image & " " & B3'Image);
+      --  end;
+      Pack_I16 (AX,    Base + 4);
+      Pack_I16 (AY,    Base + 6);
+      Pack_I16 (AZ,    Base + 8);
+      Pack_I16 (GX,    Base + 10);
+      Pack_I16 (GY,    Base + 12);
+      Pack_I16 (GZ,    Base + 14);
+      Pack_I16 (MX,    Base + 16);
+      Pack_I16 (MY,    Base + 18);
+      Pack_I16 (MZ,    Base + 20);
+      Pack_U24 (Press, Base + 22);
+      Pack_U24 (Temp,  Base + 25);
    end Pack_Sample;
 
    ----------------------------------------------------------------------------
    --  Flush the current page to flash and advance the write pointer.
-   --  Called when Sample_Idx reaches SAMPLES_PER_PAGE.
    ----------------------------------------------------------------------------
    procedure Flush_Page is
    begin
-      -- Stamp page sequence number into bytes 252-255 (1-based: 253..256)
       Pack_U32 (Page_Num, 252);
 
-      -- Erase the sector when we're on the first page of a new sector
       if Write_Addr mod SECTOR_SIZE = 0 then
-         Erase_Sector (Write_Addr);
+         --  Erase_Sector (Write_Addr);
+         Erase_Sector;
          Put_Line ("Erased sector at " & Write_Addr'Image);
       end if;
 
       Write_Page_To_Flash (Page_Buf, Write_Addr);
       Put_Line ("Page " & Page_Num'Image & " written at " & Write_Addr'Image);
 
-      -- Advance
       Page_Num   := Page_Num + 1;
       Write_Addr := Write_Addr + PAGE_SIZE;
       Sample_Idx := 0;
+      Page_Buf   := (others => 0);
 
-      -- Zero out buffer for next page so padding bytes are clean
-      Page_Buf := (others => 0);
-
-      -- Stop logging if flash is full
       if Write_Addr > MAX_PAGE * PAGE_SIZE then
          Put_Line ("FLASH FULL - halting");
          loop null; end loop;
@@ -397,7 +452,7 @@ procedure Flight_Logger is
    end Flush_Page;
 
    ----------------------------------------------------------------------------
-   --  Assemble raw I2C bytes into Unsigned_16 (same pattern as i2c_sensors)
+   --  Raw byte assembly helpers
    ----------------------------------------------------------------------------
    function To_U16 (Lo : UInt8; Hi : UInt8) return Unsigned_16 is
    begin
@@ -437,14 +492,6 @@ begin
    Put_Line ("--- Flight Logger Boot ---");
 
    ----------------------------------------------------------------------------
-   --  I2C init
-   ----------------------------------------------------------------------------
-   SDA.Configure (Output, Pull_Up, RP.GPIO.I2C, Schmitt => True);
-   SCL.Configure (Output, Pull_Up, RP.GPIO.I2C, Schmitt => True);
-   RP.Device.I2CM_0.Configure (Baudrate => 100_000);
-   Put_Line ("I2C ready");
-
-   ----------------------------------------------------------------------------
    --  SPI / flash init
    ----------------------------------------------------------------------------
    MISO_Pin.Configure (Input,  Floating, RP.GPIO.SPI);
@@ -467,18 +514,15 @@ begin
    --  Verify JEDEC ID before doing anything destructive
    ----------------------------------------------------------------------------
    declare
-      ID    : HAL.SPI.SPI_Data_8b (1 .. 3);
+      Cmd   : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (1 => HAL.UInt8 (CMD_JEDEC_ID));
       Dummy : constant HAL.SPI.SPI_Data_8b (1 .. 3) := (others => 0);
-      -- Discard the junk byte clocked in while sending the command
-      --  Junk  : HAL.SPI.SPI_Data_8b (1 .. 1);
-      --  Dummy1 : constant HAL.SPI.SPI_Data_8b (1 .. 1) := (others => 0);
+      Junk  : HAL.SPI.SPI_Data_8b (1 .. 1);
+      ID    : HAL.SPI.SPI_Data_8b (1 .. 3);
    begin
       CS_Low;
-      Send_Byte (CMD_JEDEC_ID);
-      --  Transfer (Dummy1, Junk);   -- flush the RX byte from sending the command
-      Transfer (Dummy,  ID);
+      Transfer (Cmd,   Junk);
+      Transfer (Dummy, ID);
       CS_High;
-      -- Expected: 239 (0xEF), 64 (0x40), 24 (0x18)
       declare
          B0 : constant HAL.UInt8 := ID (1);
          B1 : constant HAL.UInt8 := ID (2);
@@ -492,43 +536,39 @@ begin
    end;
 
    ----------------------------------------------------------------------------
-   --  Erase the first sector before starting (sector 0, address 0x000000)
+   --  I2C init (commented out until sensor integration is re-enabled)
    ----------------------------------------------------------------------------
-   Put_Line ("Erasing sector 0...");
-   Erase_Sector (0);
-   Put_Line ("Ready to log");
+   SDA.Configure (Output, Pull_Up, RP.GPIO.I2C, Schmitt => True);
+   SCL.Configure (Output, Pull_Up, RP.GPIO.I2C, Schmitt => True);
+   RP.Device.I2CM_0.Configure (Baudrate => 100_000);
+   Put_Line ("I2C ready");
 
    ----------------------------------------------------------------------------
-   --  Enable sensors
+   --  Sensors disabled until flash write path is verified
    ----------------------------------------------------------------------------
-   Enable_Sensor (Addr_AG,  CTRL_REG6_XL, ODR_XL,  "Accel");
-   Enable_Sensor (Addr_AG,  CTRL_REG1_G,  ODR_G,   "Gyro");
-   Enable_Sensor (Addr_Mag, CTRL_REG1_M,  ODR_M1,  "Mag mode");
-   Enable_Sensor (Addr_Mag, CTRL_REG3_M,  ODR_M3,  "Mag power");
-   Enable_Sensor (Addr_BMP, CTRL_PWR_BMP, SETTINGS_BMP, "BMP390");
-   Put_Line ("Sensors enabled");
+   --  Enable_Sensor (Addr_AG,  CTRL_REG6_XL, ODR_XL,  "Accel");
+   --  Enable_Sensor (Addr_AG,  CTRL_REG1_G,  ODR_G,   "Gyro");
+   --  Enable_Sensor (Addr_Mag, CTRL_REG1_M,  ODR_M1,  "Mag mode");
+   --  Enable_Sensor (Addr_Mag, CTRL_REG3_M,  ODR_M3,  "Mag power");
+   --  Enable_Sensor (Addr_BMP, CTRL_PWR_BMP, SETTINGS_BMP, "BMP390");
+   --  Put_Line ("Sensors enabled");
 
    ----------------------------------------------------------------------------
    --  Main logging loop
    ----------------------------------------------------------------------------
    loop
       declare
-         -- Timestamp first so it reflects the start of this sample
-         TS : constant Unsigned_32 := Get_Timestamp;
-
-         -- I2C raw buffers
-         IMU_Data : I2C_Data (1 .. 6);
-         BMP_Data : I2C_Data (1 .. 6);
-         IMU_Ok   : Boolean;
-         BMP_Ok   : Boolean;
-
-         -- Assembled axis values (Unsigned_16 = raw two's complement bits)
+         TS          : constant Unsigned_32 := Get_Timestamp;
+         IMU_Data    : I2C_Data (1 .. 6);
+         BMP_Data    : I2C_Data (1 .. 6);
+         IMU_Ok      : Boolean;
+         BMP_Ok      : Boolean;
          AX, AY, AZ : Unsigned_16 := 0;
          GX, GY, GZ : Unsigned_16 := 0;
          MX, MY, MZ : Unsigned_16 := 0;
          Press, Temp : Unsigned_32 := 0;
       begin
-         -- Accel (6 bytes from OUT_X_L_XL)
+         -- Accel
          Read_IMU_Raw (Addr_AG, OUT_X_L_XL, IMU_Data, IMU_Ok);
          if IMU_Ok then
             AX := To_U16 (IMU_Data (1), IMU_Data (2));
@@ -538,7 +578,7 @@ begin
             Put_Line ("Accel read ERR");
          end if;
 
-         -- Gyro (6 bytes from OUT_X_L_G)
+         -- Gyro
          Read_IMU_Raw (Addr_AG, OUT_X_L_G, IMU_Data, IMU_Ok);
          if IMU_Ok then
             GX := To_U16 (IMU_Data (1), IMU_Data (2));
@@ -548,7 +588,7 @@ begin
             Put_Line ("Gyro read ERR");
          end if;
 
-         -- Mag (6 bytes from OUT_X_L_M)
+         -- Mag
          Read_IMU_Raw (Addr_Mag, OUT_X_L_M, IMU_Data, IMU_Ok);
          if IMU_Ok then
             MX := To_U16 (IMU_Data (1), IMU_Data (2));
@@ -558,7 +598,7 @@ begin
             Put_Line ("Mag read ERR");
          end if;
 
-         -- BMP390 (bytes 0-2 = pressure raw, bytes 3-5 = temperature raw)
+         -- BMP390
          Read_BMP_Raw (BMP_Data, BMP_Ok);
          if BMP_Ok then
             Press := To_U24 (BMP_Data (1), BMP_Data (2), BMP_Data (3));
@@ -567,7 +607,6 @@ begin
             Put_Line ("BMP read ERR");
          end if;
 
-         -- Pack sample into the page buffer at the current slot
          Pack_Sample (TS,
                       AX, AY, AZ,
                       GX, GY, GZ,
@@ -576,14 +615,11 @@ begin
 
          Sample_Idx := Sample_Idx + 1;
 
-         -- Flush when the page is full (9 samples = 252 bytes)
          if Sample_Idx = SAMPLES_PER_PAGE then
             Flush_Page;
          end if;
       end;
 
-      -- Small delay between samples so we don't hammer I2C
-      -- (adjust to taste — 100ms gives ~10 Hz logging rate)
       RP.Device.Timer.Delay_Milliseconds (100);
       Pico.LED.Toggle;
    end loop;
