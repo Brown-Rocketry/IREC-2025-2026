@@ -220,10 +220,10 @@ procedure Flash_Reader_2 is
 
    begin
       pragma Unreferenced (Sample_Idx, Page_Idx);
-      --  Put_Line (Integer_32'Image (Integer_32 (TS)));   -- TS
+      Put_Line (Unsigned_32'Image (Unsigned_32 (TS)));   -- TS
       --  Put_Line (Signed_Img (AX));                      -- AX
       --  Put_Line (Signed_Img (AY));                      -- AY
-      Put_Line (Signed_Img (AZ));                      -- AZ
+      --  Put_Line (Signed_Img (AZ));                      -- AZ
       --  Put_Line (Signed_Img (GX));                      -- GX
       --  Put_Line (Signed_Img (GY));                      -- GY
       --  Put_Line (Signed_Img (GZ));                      -- GZ
