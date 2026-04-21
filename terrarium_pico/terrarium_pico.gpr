@@ -17,7 +17,7 @@ project Terrarium_Pico is
       -- "spi_flash_test.adb"
        "i2c_sensors.adb",
        "flight_logger.adb",
-       "flash_reader.adb"
+       "flash_reader_2.adb"
       );
 
    package Compiler is
