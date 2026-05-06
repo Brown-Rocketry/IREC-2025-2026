@@ -1,6 +1,3 @@
---- Flash Reader Boot ---
-SPI ready, starting read...
-JEDEC:  239  64  24
     P:00181716
     P:00343332
     P:00504F4E
@@ -438922,5 +438919,3 @@ JEDEC:  239  64  24
     P:0068F900
     P:0068FA00
     P:0068F800
-End of data at page 48769
---- Done ---
