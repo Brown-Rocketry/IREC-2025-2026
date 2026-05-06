@@ -207,8 +207,10 @@ procedure Flash_Reader_2 is
       MX   : constant Unsigned_16 := Unpack_I16 (Base + 16);
       MY   : constant Unsigned_16 := Unpack_I16 (Base + 18);
       MZ   : constant Unsigned_16 := Unpack_I16 (Base + 20);
-      P    : constant Unsigned_32 := Unpack_U24 (Base + 22);
-      T    : constant Unsigned_32 := Unpack_U24 (Base + 25);
+      --  P    : constant Unsigned_32 := Unpack_U24 (Base + 22);
+      --  T    : constant Unsigned_32 := Unpack_U24 (Base + 25);
+      P : constant Unsigned_32 := Unpack_U24 (Base + 23);
+      T : constant Unsigned_32 := Unpack_U24 (Base + 26);
 
       function Signed_Img (V : Unsigned_16) return String is
          S : constant Integer_32 := (if V >= 32768
@@ -230,8 +232,9 @@ procedure Flash_Reader_2 is
       --  Put_Line (Signed_Img (MX));                      -- MX
       --  Put_Line (Signed_Img (MY));                      -- MY
       --  Put_Line (Signed_Img (MZ));                      -- MZ
-      --  Put_Line (Integer_32'Image (Integer_32 (P)));    -- P
-      --  Put_Line (Integer_32'Image (Integer_32 (T)));    -- T
+      Put_Line (Integer_32'Image (Integer_32 (P)));    -- P
+      Put_Line (Integer_32'Image (Integer_32 (T)));    -- T
+      
    end Print_Sample;
 
 
@@ -359,3 +362,102 @@ begin
    end loop;
 
 end Flash_Reader_2;
+
+-- bmp_cal_dump.adb
+-- Reads BMP390 NVM calibration coefficients (registers 0x31..0x45)
+-- and prints them as decimal bytes over UART.
+
+--  with RP.GPIO;        use RP.GPIO;
+--  with RP.Device;
+--  with RP.Clock;
+--  with RP.I2C_Master;
+--  with RP.UART;
+--  with HAL;            use HAL;
+--  with HAL.I2C;        use HAL.I2C;
+--  with HAL.UART;       use HAL.UART;
+--  with Pico;
+--  with Interfaces;     use Interfaces;
+
+--  procedure BMP_Cal_Dump is
+
+--     UART    : RP.UART.UART_Port renames RP.Device.UART_1;
+--     UART_TX : GPIO_Point := (Pin => 8);
+--     UART_RX : GPIO_Point := (Pin => 9);
+--     U_Stat  : UART_Status;
+
+--     SDA : GPIO_Point := (Pin => 0);
+--     SCL : GPIO_Point := (Pin => 1);
+
+--     Addr_BMP : constant HAL.I2C.I2C_Address := 16#EE#;
+--     NVM_BASE : constant UInt8 := 16#31#;
+
+--     procedure Put_Line (S : String) is
+--        Bytes : UART_Data_8b (1 .. S'Length + 2);
+--     begin
+--        for I in S'Range loop
+--           Bytes (I - S'First + 1) := Character'Pos (S (I));
+--        end loop;
+--        Bytes (S'Length + 1) := Character'Pos (ASCII.CR);
+--        Bytes (S'Length + 2) := Character'Pos (ASCII.LF);
+--        for I in 1 .. Bytes'Length loop
+--           declare
+--              One : UART_Data_8b (1 .. 1) := (1 => Bytes (I));
+--           begin
+--              UART.Transmit (One, U_Stat);
+--           end;
+--           for J in 1 .. 1_000 loop null; end loop;
+--        end loop;
+--     end Put_Line;
+
+--  begin
+--     RP.Clock.Initialize (Pico.XOSC_Frequency);
+--     RP.Clock.Enable (RP.Clock.PERI);
+--     RP.Device.Timer.Enable;
+--     RP.GPIO.Enable;
+--     Pico.LED.Configure (Output);
+
+--     UART_TX.Configure (Output, Pull_Up, RP.GPIO.UART);
+--     UART_RX.Configure (Input,  Floating, RP.GPIO.UART);
+--     UART.Configure
+--       (Config =>
+--          (Baud      => 115_200,
+--           Word_Size => 8,
+--           Parity    => False,
+--           Stop_Bits => 1,
+--           others    => <>));
+
+--     SDA.Configure (Output, Pull_Up, RP.GPIO.I2C, Schmitt => True);
+--     SCL.Configure (Output, Pull_Up, RP.GPIO.I2C, Schmitt => True);
+--     RP.Device.I2CM_0.Configure (Baudrate => 100_000);
+
+--     Put_Line ("--- BMP390 Calibration Dump ---");
+
+--     declare
+--        Port : RP.I2C_Master.I2C_Master_Port renames RP.Device.I2CM_0;
+--        Data : I2C_Data (1 .. 21);
+--        Stat : HAL.I2C.I2C_Status;
+--     begin
+--        Port.Mem_Read
+--          (Addr          => Addr_BMP,
+--           Mem_Addr      => UInt16 (NVM_BASE),
+--           Mem_Addr_Size => Memory_Size_8b,
+--           Data          => Data,
+--           Status        => Stat,
+--           Timeout       => 1000);
+
+--        if Stat /= HAL.I2C.Ok then
+--           Put_Line ("BMP read FAILED: " & Stat'Image);
+--        else
+--           for I in Data'Range loop
+--              Put_Line (Integer'Image (Integer (Data (I))));
+--           end loop;
+--        end if;
+--     end;
+
+--     Put_Line ("--- Done ---");
+--     loop
+--        RP.Device.Timer.Delay_Milliseconds (500);
+--        Pico.LED.Toggle;
+--     end loop;
+
+--  end BMP_Cal_Dump;
