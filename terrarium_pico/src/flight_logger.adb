@@ -666,7 +666,7 @@ begin
          end if;
       end;
 
-      RP.Device.Timer.Delay_Milliseconds (200);
+      RP.Device.Timer.Delay_Milliseconds (6);
       Pico.LED.Toggle;
    end loop;
 
