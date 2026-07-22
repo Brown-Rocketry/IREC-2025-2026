@@ -2,7 +2,7 @@
 
 Bare-metal Ada firmware for the Brown Rocketry payload data acquisition system. Runs on a Raspberry Pi Pico (RP2040), polls a 9-axis IMU and a barometric sensor over a shared I2C bus, packs each reading into a fixed 28-byte record, and writes to SPI flash.
 
-Flown on a high-power launch at a RIMRA field, [FILL: month/year]. Flight duration 45.2 seconds, against a configured ±16 g accelerometer range. The flash filled to capacity over a 1,497 minute campaign, 589,824 samples, recovered complete with no missing pages.
+Flown on a high-power launch at a RIMRA field, April 2026. Flight duration 45.2 seconds, against a configured ±16 g accelerometer range. The flash filled to capacity over a 1,497 minute campaign, 589,824 samples, recovered complete with no missing pages.
 
 See the [top-level README](../README.md) for vehicle context, team, and program history.
 
