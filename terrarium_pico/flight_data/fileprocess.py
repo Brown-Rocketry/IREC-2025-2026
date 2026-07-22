@@ -21,6 +21,26 @@ def load_hex_bmp(filename, prefix):
             values.append(int(hex_str, 16))
     return values
 
+def unwrap_timestamps(ts_raw, bit_depth=32):
+    """
+    Fixes hardware counter rollovers by detecting large sudden drops in time.
+    Change bit_depth=16 if your counter wraps at 65536.
+    """
+    MAX_VAL = 1 << bit_depth
+    HALF_VAL = MAX_VAL // 2
+    
+    unwrapped = []
+    rollover_offset = 0
+    prev_raw = ts_raw[0] if ts_raw else 0
+    
+    for val in ts_raw:
+        if (prev_raw - val) > HALF_VAL:
+            rollover_offset += MAX_VAL
+        unwrapped.append(val + rollover_offset)
+        prev_raw = val
+        
+    return unwrapped
+
 def to_g(raw, scale=16):
     return raw / (32768 / scale)
 
@@ -110,26 +130,42 @@ def integrate(series, times):
 # ---------------------------------------------------------------------------
 G = 9.80665
 SKIP = 54
-START = 73875
-STOP = 73935
+START = 73885
+STOP = 73930
 BIAS_SAMPLES = 20
 
 # ---------------------------------------------------------------------------
-# Load data
+# Load & Process Timestamps First
 # ---------------------------------------------------------------------------
-x      = load_integers("AX.txt")[SKIP:][5*START:STOP*5]
-y      = load_integers("AY.txt")[SKIP:][5*START:STOP*5]
-z      = load_integers("AZ.txt")[SKIP:][5*START:STOP*5]
-ts_raw = load_integers("TS.txt")[SKIP:][5*START:STOP*5]
+ts_full_raw = load_integers("TS.txt")[SKIP:]
+ts_full = unwrap_timestamps(ts_full_raw, bit_depth=32)
 
-P_raw  = load_hex_bmp("P_hex.txt", "P")[SKIP:][5*START:STOP*5]
-T_raw  = load_hex_bmp("T_hex.txt", "T")[SKIP:][5*START:STOP*5]
+# Duration of entire log file
+total_logged_seconds = (ts_full[-1] - ts_full[0]) / 1_000_000.0
+print(f"Total Logged Duration: {total_logged_seconds:.2f} s ({total_logged_seconds / 60:.2f} min)")
+
+# Slicing window
+ts_window = ts_full[5*START : STOP*5]
+
+# Duration of sliced section
+window_seconds = (ts_window[-1] - ts_window[0]) / 1_000_000.0
+print(f"Selected Window Duration: {window_seconds:.2f} s")
+
+# ---------------------------------------------------------------------------
+# Load Sliced Data Series
+# ---------------------------------------------------------------------------
+x     = load_integers("AX.txt")[SKIP:][5*START:STOP*5]
+y     = load_integers("AY.txt")[SKIP:][5*START:STOP*5]
+z     = load_integers("AZ.txt")[SKIP:][5*START:STOP*5]
+
+P_raw = load_hex_bmp("P_hex.txt", "P")[SKIP:][5*START:STOP*5]
+T_raw = load_hex_bmp("T_hex.txt", "T")[SKIP:][5*START:STOP*5]
 
 par = parse_calibration(CAL_BYTES)
 
-n = min(len(x), len(y), len(z), len(ts_raw), len(P_raw), len(T_raw))
-t0 = ts_raw[0]
-time = [(t - t0) / 1_000_000 for t in ts_raw[:n]]
+n = min(len(x), len(y), len(z), len(ts_window), len(P_raw), len(T_raw))
+t0 = ts_window[0]
+time = [(t - t0) / 1_000_000.0 for t in ts_window[:n]]
 
 x_g = [to_g(v) for v in x[:n]]
 y_g = [to_g(v) for v in y[:n]]
@@ -145,11 +181,6 @@ P_Pa = [compensate_pressure(rp, t, par) for rp, t in zip(P_raw[:n], T_C)]
 valid_mask  = [50000 < p < 110000 for p in P_Pa]
 P_Pa_clean  = [p if v else float('nan') for p, v in zip(P_Pa, valid_mask)]
 
-# P0 = sum(p for p, v in zip(P_Pa[:BIAS_SAMPLES], valid_mask[:BIAS_SAMPLES]) if v) / \
-#      max(sum(valid_mask[:BIAS_SAMPLES]), 1)
-# Find the quietest 20-sample window before launch
-# by looking for the period with lowest pressure variance
-# (= most stable = on the pad, engine not yet firing)
 SEARCH_WINDOW = 100  # samples to search through at start
 best_var = float('inf')
 best_start = 0
@@ -205,7 +236,6 @@ pz = integrate(vz, time)
 # ---------------------------------------------------------------------------
 # Plot
 # ---------------------------------------------------------------------------
-# fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(5, 1, figsize=(12, 17), sharex=True)
 fig, (ax4, ax5, ax1) = plt.subplots(3, 1, figsize=(12, 17), sharex=True)
 
 ax1.plot(time, x_g, label='X')
@@ -215,27 +245,11 @@ ax1.set_ylabel('Acceleration (g)')
 ax1.set_title('Accel Axes (raw)')
 ax1.legend(); ax1.grid(True)
 
-# ax2.plot(time, vx, label=f'Vx ({min(vx):.1f} / {max(vx):.1f} m/s)')
-# ax2.plot(time, vy, label=f'Vy ({min(vy):.1f} / {max(vy):.1f} m/s)')
-# ax2.plot(time, vz, label=f'Vz ({min(vz):.1f} / {max(vz):.1f} m/s)')
-# ax2.set_ylabel('Velocity (m/s)')
-# ax2.set_title('Velocity by Axis (pad bias subtracted)')
-# ax2.legend(); ax2.grid(True)
-
-# ax3.plot(time, px, label=f'Px ({min(px):.1f} / {max(px):.1f} m)')
-# ax3.plot(time, py, label=f'Py ({min(py):.1f} / {max(py):.1f} m)')
-# ax3.plot(time, pz, label=f'Pz ({min(pz):.1f} / {max(pz):.1f} m)')
-# ax3.set_ylabel('Position (m)')
-# ax3.set_title('Position by Axis (double integrated)')
-# ax3.legend(); ax3.grid(True)
-
-# Barometric vertical velocity: finite difference of altitude over time.
-# nan propagates naturally where altitude is nan (garbage samples).
-baro_vz = [float('nan')]  # no velocity for first sample
+baro_vz = [float('nan')]
 for i in range(1, len(altitude)):
     a0, a1 = altitude[i-1], altitude[i]
     dt = time[i] - time[i-1]
-    if dt > 0 and a0 == a0 and a1 == a1:  # both non-nan and valid dt
+    if dt > 0 and a0 == a0 and a1 == a1:
         baro_vz.append((a1 - a0) / dt)
     else:
         baro_vz.append(float('nan'))
@@ -258,4 +272,5 @@ ax5.legend(); ax5.grid(True)
 
 plt.tight_layout()
 plt.savefig(os.path.join(os.path.dirname(__file__), "flight_plot.png"), dpi=150)
+
 print(f"Plot saved. Peak baro altitude: {peak:.1f} m, peak baro Vz: {peak_baro_vz:.1f} m/s")
