@@ -1,8 +1,11 @@
 # Brown Rocketry Payload Avionics (2025-2026)
 
 **Team:** Brown Rocketry
+
 **Vehicle:** Providentia
+
 **Competition:** IREC 2025-2026, 10K COTS category. Entry accepted; competition cancelled before launch week.
+
 **Flight status:** Payload flown and validated on a high-power launch at a RIMRA field, April 2026.
 
 ---
@@ -16,7 +19,7 @@ Measured results from that flight and the surrounding ground campaign:
 | Result | Value |
 |---|---|
 | Flight duration | 45.2 s |
-| Sustained boost-phase acceleration | [FILL] G |
+| Sustained boost-phase acceleration | 12.1 G |
 | Highest single logged sample | 14.5 G, treated as an unresolved transient, see note |
 | Accelerometer configuration | ±16 g. No saturation at any point |
 | Logging rate | 6.57 Hz mean, 5 Hz by end of run, against a 119 Hz sensor output rate |
