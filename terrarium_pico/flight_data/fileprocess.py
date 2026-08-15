@@ -1,276 +1,453 @@
+"""
+Flight data processing for RP2040 / Ada payload.
+
+Expected input files, one value per line, in the same directory:
+  TS.txt      timestamps, integer microseconds, 32-bit counter
+  AX/AY/AZ    raw signed accelerometer counts
+  P_hex.txt   raw pressure, hex, optionally "label: HEX"
+  T_hex.txt   raw temperature, hex, same format
+"""
+
 import os
+import math
 import matplotlib.pyplot as plt
 
+# ---------------------------------------------------------------------------
+# CONFIG
+# ---------------------------------------------------------------------------
+SKIP = 54          # leading samples discarded (startup garbage)
+START = 73885      # window start, in units of 5 samples
+STOP = 73930       # window stop,  in units of 5 samples
+STRIDE = 5         # multiplier used on START/STOP
+
+FS_G = 16          # accelerometer full-scale setting actually programmed
+LIFTOFF_G = 2.0    # magnitude threshold used to detect liftoff
+PAD_GUARD = 3      # samples to leave between the pad window and liftoff
+PAD_N = 20         # samples averaged for the pad baseline
+
+# Pressure sanity band. Widened from the original 50-110 kPa so that a genuine
+# ejection overpressure inside the airframe is reported rather than discarded.
+P_MIN_PA = 30000.0
+P_MAX_PA = 130000.0
+
+SMOOTH_W = 5       # centered moving-average width for altitude smoothing
+PLOT_LEAD_S = 5.0  # seconds of pad time to show before liftoff in the figure
+PLOT_TAIL_S = 5.0  # seconds to show after the last valid altitude sample
+
+G = 9.80665
+
+# LSM9DS1 linear acceleration sensitivity, mg/LSB, from the datasheet.
+# Note that +/-2, 4, 8 g match FS/32768 exactly and +/-16 g does not.
+SENSITIVITY_MG_PER_LSB = {2: 0.061, 4: 0.122, 8: 0.244, 16: 0.732}
+
+CAL_BYTES = [32, 109, 167, 77, 249, 205, 27, 77, 22, 6, 1, 61,
+             76, 90, 92, 3, 250, 170, 15, 5, 245]
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+# ---------------------------------------------------------------------------
+# Loading
+# ---------------------------------------------------------------------------
 def load_integers(filename):
-    path = os.path.join(os.path.dirname(__file__), filename)
-    with open(path, 'r') as f:
+    with open(os.path.join(HERE, filename), "r") as f:
         return [int(line.strip()) for line in f if line.strip()]
 
-def load_hex_bmp(filename, prefix):
-    path = os.path.join(os.path.dirname(__file__), filename)
+
+def load_hex(filename):
     values = []
-    with open(path, 'r') as f:
+    with open(os.path.join(HERE, filename), "r") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            if ':' in line:
-                hex_str = line.split(':')[1].strip()
-            else:
-                hex_str = line.strip()
+            hex_str = line.split(":")[1].strip() if ":" in line else line
             values.append(int(hex_str, 16))
     return values
 
+
 def unwrap_timestamps(ts_raw, bit_depth=32):
-    """
-    Fixes hardware counter rollovers by detecting large sudden drops in time.
-    Change bit_depth=16 if your counter wraps at 65536.
-    """
-    MAX_VAL = 1 << bit_depth
-    HALF_VAL = MAX_VAL // 2
-    
-    unwrapped = []
-    rollover_offset = 0
-    prev_raw = ts_raw[0] if ts_raw else 0
-    
-    for val in ts_raw:
-        if (prev_raw - val) > HALF_VAL:
-            rollover_offset += MAX_VAL
-        unwrapped.append(val + rollover_offset)
-        prev_raw = val
-        
-    return unwrapped
+    """Undo hardware counter rollover. A 32-bit microsecond counter wraps
+    roughly every 71.6 minutes, so a 24 hour log contains many rollovers."""
+    max_val = 1 << bit_depth
+    half = max_val // 2
+    out = []
+    offset = 0
+    prev = ts_raw[0] if ts_raw else 0
+    for v in ts_raw:
+        if (prev - v) > half:
+            offset += max_val
+        out.append(v + offset)
+        prev = v
+    return out
 
-def to_g(raw, scale=16):
-    return raw / (32768 / scale)
 
 # ---------------------------------------------------------------------------
-# BMP390 calibration coefficients
+# Conversion
 # ---------------------------------------------------------------------------
-CAL_BYTES = [32, 109, 167, 77, 249, 205, 27, 77, 22, 6, 1, 61, 76, 90, 92, 3, 250, 170, 15, 5, 245]
+def to_g(raw, fs_g=FS_G):
+    return raw * SENSITIVITY_MG_PER_LSB[fs_g] / 1000.0
 
-def parse_calibration(raw_bytes):
+
+def parse_calibration(b):
     def u16(lo, hi): return lo | (hi << 8)
+
     def i16(lo, hi):
         v = u16(lo, hi)
         return v - 65536 if v >= 32768 else v
-    def i8(b):
-        return b - 256 if b >= 128 else b
 
-    b = raw_bytes
+    def i8(x):
+        return x - 256 if x >= 128 else x
+
     nvm = {
-        'T1':  u16(b[0],  b[1]),
-        'T2':  u16(b[2],  b[3]),
-        'T3':  i8 (b[4]),
-        'P1':  i16(b[5],  b[6]),
-        'P2':  i16(b[7],  b[8]),
-        'P3':  i8 (b[9]),
-        'P4':  i8 (b[10]),
-        'P5':  u16(b[11], b[12]),
-        'P6':  u16(b[13], b[14]),
-        'P7':  i8 (b[15]),
-        'P8':  i8 (b[16]),
-        'P9':  i16(b[17], b[18]),
-        'P10': i8 (b[19]),
-        'P11': i8 (b[20]),
+        "T1": u16(b[0], b[1]),   "T2": u16(b[2], b[3]),   "T3": i8(b[4]),
+        "P1": i16(b[5], b[6]),   "P2": i16(b[7], b[8]),   "P3": i8(b[9]),
+        "P4": i8(b[10]),         "P5": u16(b[11], b[12]), "P6": u16(b[13], b[14]),
+        "P7": i8(b[15]),         "P8": i8(b[16]),         "P9": i16(b[17], b[18]),
+        "P10": i8(b[19]),        "P11": i8(b[20]),
+    }
+    return {
+        "T1": nvm["T1"] * 2**8,
+        "T2": nvm["T2"] / 2**30,
+        "T3": nvm["T3"] / 2**48,
+        "P1": (nvm["P1"] - 2**14) / 2**20,
+        "P2": (nvm["P2"] - 2**14) / 2**29,
+        "P3": nvm["P3"] / 2**32,
+        "P4": nvm["P4"] / 2**37,
+        "P5": nvm["P5"] * 2**3,
+        "P6": nvm["P6"] / 2**6,
+        "P7": nvm["P7"] / 2**8,
+        "P8": nvm["P8"] / 2**15,
+        "P9": nvm["P9"] / 2**48,
+        "P10": nvm["P10"] / 2**48,
+        "P11": nvm["P11"] / 2**65,
     }
 
-    par = {
-        'T1':  nvm['T1']  * 2**8,
-        'T2':  nvm['T2']  / 2**30,
-        'T3':  nvm['T3']  / 2**48,
-        'P1': (nvm['P1'] - 2**14) / 2**20,
-        'P2': (nvm['P2'] - 2**14) / 2**29,
-        'P3':  nvm['P3']  / 2**32,
-        'P4':  nvm['P4']  / 2**37,
-        'P5':  nvm['P5']  * 2**3,
-        'P6':  nvm['P6']  / 2**6,
-        'P7':  nvm['P7']  / 2**8,
-        'P8':  nvm['P8']  / 2**15,
-        'P9':  nvm['P9']  / 2**48,
-        'P10': nvm['P10'] / 2**48,
-        'P11': nvm['P11'] / 2**65,
-    }
-    return par
 
-def compensate_temperature(raw_T, par):
-    pd1 = raw_T - par['T1']
-    pd2 = pd1 * par['T2']
-    t_lin = pd2 + (pd1 * pd1) * par['T3']
-    return t_lin
+def compensate_temperature(raw_t, par):
+    d1 = raw_t - par["T1"]
+    return d1 * par["T2"] + (d1 * d1) * par["T3"]
 
-def compensate_pressure(raw_P, t_lin, par):
-    pd1 = par['P6'] * t_lin
-    pd2 = par['P7'] * t_lin * t_lin
-    pd3 = par['P8'] * t_lin * t_lin * t_lin
-    po1 = par['P5'] + pd1 + pd2 + pd3
 
-    pd1 = par['P2'] * t_lin
-    pd2 = par['P3'] * t_lin * t_lin
-    pd3 = par['P4'] * t_lin * t_lin * t_lin
-    po2 = raw_P * (par['P1'] + pd1 + pd2 + pd3)
+def compensate_pressure(raw_p, t_lin, par):
+    po1 = (par["P5"] + par["P6"] * t_lin + par["P7"] * t_lin**2
+           + par["P8"] * t_lin**3)
+    po2 = raw_p * (par["P1"] + par["P2"] * t_lin + par["P3"] * t_lin**2
+                   + par["P4"] * t_lin**3)
+    po3 = (raw_p**2) * (par["P9"] + par["P10"] * t_lin) + par["P11"] * raw_p**3
+    return po1 + po2 + po3
 
-    pd1 = raw_P * raw_P
-    pd2 = par['P9'] + par['P10'] * t_lin
-    pd3 = pd1 * pd2
-    pd4 = pd3 + par['P11'] * raw_P * raw_P * raw_P
 
-    return po1 + po2 + pd4
+def pressure_to_altitude(p_pa, p0_pa):
+    return 44330.0 * (1.0 - (p_pa / p0_pa) ** (1.0 / 5.255))
 
-def pressure_to_altitude(P_Pa, P0_Pa):
-    return 44330.0 * (1.0 - (P_Pa / P0_Pa) ** (1.0 / 5.255))
 
-def integrate(series, times):
-    out = [0.0]
-    for i in range(1, len(series)):
-        dt = times[i] - times[i-1]
-        out.append(out[-1] + (series[i] + series[i-1]) / 2 * dt)
+def moving_average(series, width):
+    """Centered moving average that skips NaN and preserves length."""
+    half = width // 2
+    out = []
+    for i in range(len(series)):
+        lo, hi = max(0, i - half), min(len(series), i + half + 1)
+        vals = [v for v in series[lo:hi] if v == v]
+        out.append(sum(vals) / len(vals) if vals else float("nan"))
     return out
 
-# ---------------------------------------------------------------------------
-G = 9.80665
-SKIP = 54
-START = 73885
-STOP = 73930
-BIAS_SAMPLES = 20
+
+def median(vals):
+    s = sorted(vals)
+    n = len(s)
+    if n == 0:
+        return float("nan")
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
 
 # ---------------------------------------------------------------------------
-# Load & Process Timestamps First
+# Load
 # ---------------------------------------------------------------------------
-ts_full_raw = load_integers("TS.txt")[SKIP:]
-ts_full = unwrap_timestamps(ts_full_raw, bit_depth=32)
+lo, hi = STRIDE * START, STRIDE * STOP
 
-# Duration of entire log file
-total_logged_seconds = (ts_full[-1] - ts_full[0]) / 1_000_000.0
-print(f"Total Logged Duration: {total_logged_seconds:.2f} s ({total_logged_seconds / 60:.2f} min)")
+ts_all = unwrap_timestamps(load_integers("TS.txt")[SKIP:])
+total_s = (ts_all[-1] - ts_all[0]) / 1e6
+print("=" * 62)
+print("FULL LOG")
+print(f"  samples            : {len(ts_all)}")
+print(f"  duration           : {total_s:.1f} s  ({total_s/3600:.2f} h)")
 
-# Slicing window
-ts_window = ts_full[5*START : STOP*5]
+dt_all = [(ts_all[i] - ts_all[i - 1]) / 1e6 for i in range(1, len(ts_all))]
+dt_med_all = median(dt_all)
+gaps = [(i, d) for i, d in enumerate(dt_all) if d > 2.0 * dt_med_all]
+print(f"  median sample rate : {1.0/dt_med_all:.2f} Hz")
+print(f"  max interval       : {max(dt_all)*1000:.1f} ms")
+print(f"  intervals > 2x med : {len(gaps)}  <- evidence for the no-gaps claim")
+if gaps[:5]:
+    print(f"  first few gaps     : {[(i, round(d*1000,1)) for i, d in gaps[:5]]}")
 
-# Duration of sliced section
-window_seconds = (ts_window[-1] - ts_window[0]) / 1_000_000.0
-print(f"Selected Window Duration: {window_seconds:.2f} s")
+ts = ts_all[lo:hi]
+ax_raw = load_integers("AX.txt")[SKIP:][lo:hi]
+ay_raw = load_integers("AY.txt")[SKIP:][lo:hi]
+az_raw = load_integers("AZ.txt")[SKIP:][lo:hi]
+p_raw = load_hex("P_hex.txt")[SKIP:][lo:hi]
+t_raw = load_hex("T_hex.txt")[SKIP:][lo:hi]
+
+n = min(len(ts), len(ax_raw), len(ay_raw), len(az_raw), len(p_raw), len(t_raw))
+t0 = ts[0]
+time = [(v - t0) / 1e6 for v in ts[:n]]
+
+dt_win = [time[i] - time[i - 1] for i in range(1, n)]
+dt_med = median(dt_win)
+print("\nFLIGHT WINDOW")
+print(f"  samples            : {n}")
+print(f"  duration           : {time[-1]:.2f} s")
+print(f"  median sample rate : {1.0/dt_med:.2f} Hz")
+print(f"  interval min/max   : {min(dt_win)*1000:.1f} / {max(dt_win)*1000:.1f} ms")
 
 # ---------------------------------------------------------------------------
-# Load Sliced Data Series
+# Accelerometer
 # ---------------------------------------------------------------------------
-x     = load_integers("AX.txt")[SKIP:][5*START:STOP*5]
-y     = load_integers("AY.txt")[SKIP:][5*START:STOP*5]
-z     = load_integers("AZ.txt")[SKIP:][5*START:STOP*5]
+x_g = [to_g(v) for v in ax_raw[:n]]
+y_g = [to_g(v) for v in ay_raw[:n]]
+z_g = [to_g(v) for v in az_raw[:n]]
+mag = [math.sqrt(a*a + b*b + c*c) for a, b, c in zip(x_g, y_g, z_g)]
 
-P_raw = load_hex_bmp("P_hex.txt", "P")[SKIP:][5*START:STOP*5]
-T_raw = load_hex_bmp("T_hex.txt", "T")[SKIP:][5*START:STOP*5]
+print("\nACCELEROMETER")
+print(f"  FS setting         : +/-{FS_G} g")
+print(f"  sensitivity used   : {SENSITIVITY_MG_PER_LSB[FS_G]} mg/LSB")
+print(f"  word spans         : +/-{SENSITIVITY_MG_PER_LSB[FS_G]*32768/1000:.1f} g")
 
+# Liftoff detection
+liftoff_i = next((i for i, m in enumerate(mag) if m > LIFTOFF_G), None)
+if liftoff_i is None:
+    raise SystemExit("No liftoff detected. Lower LIFTOFF_G or widen the window.")
+print(f"  liftoff at         : index {liftoff_i}, t = {time[liftoff_i]:.2f} s")
+
+pad_hi = max(0, liftoff_i - PAD_GUARD)
+pad_lo = max(0, pad_hi - PAD_N)
+pad_mag = sum(mag[pad_lo:pad_hi]) / max(1, pad_hi - pad_lo)
+print(f"  pad |a| magnitude  : {pad_mag:.3f} g   <- MUST be ~1.000")
+if abs(pad_mag - 1.0) > 0.05:
+    print("  WARNING: pad magnitude is not 1 g. Scale factor or FS setting is wrong.")
+
+peak_mag = max(mag)
+peak_i = mag.index(peak_mag)
+boost_end = min(n, liftoff_i + int(3.0 / dt_med))
+boost_peak = max(mag[liftoff_i:boost_end])
+print(f"  peak |a| overall   : {peak_mag:.2f} g at t = {time[peak_i]:.2f} s")
+print(f"  peak |a| in boost  : {boost_peak:.2f} g")
+over_spec = sum(1 for m in mag if m > FS_G)
+if over_spec:
+    print(f"  samples above +/-{FS_G} g : {over_spec}  <- OUTSIDE the specified"
+          f" linear range, treat as indicative only")
+
+# ---------------------------------------------------------------------------
+# Barometer
+# ---------------------------------------------------------------------------
 par = parse_calibration(CAL_BYTES)
+t_c = [compensate_temperature(v, par) for v in t_raw[:n]]
+p_pa = [compensate_pressure(rp, tt, par) for rp, tt in zip(p_raw[:n], t_c)]
 
-n = min(len(x), len(y), len(z), len(ts_window), len(P_raw), len(T_raw))
-t0 = ts_window[0]
-time = [(t - t0) / 1_000_000.0 for t in ts_window[:n]]
+rejected = [(i, p_raw[i], p_pa[i]) for i in range(n)
+            if not (P_MIN_PA < p_pa[i] < P_MAX_PA)]
+print("\nBAROMETER")
+print(f"  rejected samples   : {len(rejected)} of {n}")
+for i, raw, pa in rejected[:12]:
+    print(f"    t={time[i]:7.3f} s  raw=0x{raw:06X}  compensated={pa:,.0f} Pa")
+if rejected:
+    print("  Inspect these. Wild values mean a failed read. Values just above")
+    print("  the band may be a real ejection overpressure worth keeping.")
 
-x_g = [to_g(v) for v in x[:n]]
-y_g = [to_g(v) for v in y[:n]]
-z_g = [to_g(v) for v in z[:n]]
+p_clean = [p if P_MIN_PA < p < P_MAX_PA else float("nan") for p in p_pa]
+
+
+def apogee_for(pad_n, guard):
+    a = max(0, liftoff_i - guard - pad_n)
+    b = max(0, liftoff_i - guard)
+    samples = [p for p in p_clean[a:b] if p == p]
+    if not samples:
+        return None, None
+    p0 = sum(samples) / len(samples)
+    alt = [pressure_to_altitude(p, p0) if p == p else float("nan")
+           for p in p_clean]
+    valid = [v for v in alt if v == v]
+    return (max(valid) if valid else None), p0
+
+
+apogees = []
+for pn in (10, 20, 30):
+    for gd in (2, 5, 10):
+        a, _ = apogee_for(pn, gd)
+        if a is not None:
+            apogees.append(a)
+
+apogee, P0 = apogee_for(PAD_N, PAD_GUARD)
+altitude = [pressure_to_altitude(p, P0) if p == p else float("nan")
+            for p in p_clean]
+
+# Ejection overpressure. In flight the airframe cannot be below the pad, so a
+# strongly negative altitude means measured pressure ABOVE the pad baseline.
+# That is a real physical event, not a bad read, but it must be excluded from
+# the altitude trace used for velocity or it swamps the derivative.
+OVERP_ALT_M = -50.0
+overp = set(i for i, a in enumerate(altitude)
+            if a == a and a < OVERP_ALT_M and i > liftoff_i)
+altitude_flight = [float("nan") if i in overp else a
+                   for i, a in enumerate(altitude)]
+
+print(f"  pad pressure P0    : {P0:,.1f} Pa "
+      f"(mean of {PAD_N} samples ending {PAD_GUARD} before liftoff)")
+print(f"  apogee             : {apogee:.1f} m AGL")
+if apogees:
+    print(f"  apogee across {len(apogees)} baseline choices: "
+          f"{min(apogees):.1f} to {max(apogees):.1f} m "
+          f"(spread {max(apogees)-min(apogees):.1f} m)")
+    print("  Quote apogee to the precision this spread supports, not 0.1 m.")
+
+if overp:
+    idx = sorted(overp)
+    pk = max(p_pa[i] for i in idx)
+    print(f"  overpressure event : {len(idx)} sample(s) from "
+          f"t = {time[idx[0]]:.2f} to {time[idx[-1]]:.2f} s")
+    print(f"    peak pressure    : {pk/1000:.1f} kPa")
+    print(f"    above pad by     : {(pk-P0)/1000:.1f} kPa "
+          f"({(pk-P0)*0.000145038:.2f} psi)")
+    print("    Cross-check the accelerometer at the same timestamps. Matching")
+    print("    shock plus overpressure means ejection, not a failed read.")
 
 # ---------------------------------------------------------------------------
-# BMP compensation
+# Vertical velocity
 # ---------------------------------------------------------------------------
-T_C  = [compensate_temperature(rt, par) for rt in T_raw[:n]]
-P_Pa = [compensate_pressure(rp, t, par) for rp, t in zip(P_raw[:n], T_C)]
+alt_smooth = moving_average(altitude_flight, SMOOTH_W)
 
-# Filter out garbage: any pressure outside 50000-110000 Pa is bogus
-valid_mask  = [50000 < p < 110000 for p in P_Pa]
-P_Pa_clean  = [p if v else float('nan') for p, v in zip(P_Pa, valid_mask)]
 
-SEARCH_WINDOW = 100  # samples to search through at start
-best_var = float('inf')
-best_start = 0
-for i in range(SEARCH_WINDOW - BIAS_SAMPLES):
-    window = P_Pa[i:i + BIAS_SAMPLES]
-    valid = [p for p in window if 50000 < p < 110000]
-    if len(valid) < BIAS_SAMPLES // 2:
-        continue
-    mean = sum(valid) / len(valid)
-    var = sum((p - mean)**2 for p in valid) / len(valid)
-    if var < best_var:
-        best_var = var
-        best_start = i
+def diff(series):
+    out = [float("nan")]
+    for i in range(1, len(series)):
+        a0, a1 = series[i - 1], series[i]
+        d = time[i] - time[i - 1]
+        out.append((a1 - a0) / d if d > 0 and a0 == a0 and a1 == a1
+                   else float("nan"))
+    return out
 
-P0_samples = [p for p in P_Pa[best_start:best_start + BIAS_SAMPLES]
-              if 50000 < p < 110000]
-P0 = sum(P0_samples) / len(P0_samples)
-print(f"P0 computed from samples {best_start}-{best_start + BIAS_SAMPLES} "
-      f"(variance {best_var:.1f} Pa^2)")
 
-print(f"Pad pressure  (first {BIAS_SAMPLES} samples mean): {P0:.1f} Pa")
-print(f"Pad temp      (first {BIAS_SAMPLES} samples mean): "
-      f"{sum(T_C[:BIAS_SAMPLES]) / BIAS_SAMPLES:.2f} C")
+vz_raw = diff(altitude_flight)
+vz = diff(alt_smooth)
 
-altitude = [pressure_to_altitude(p, P0) if not (p != p) else float('nan')
-            for p in P_Pa_clean]
+apogee_i = max(range(n),
+               key=lambda i: altitude_flight[i]
+               if altitude_flight[i] == altitude_flight[i] else -1e12)
+ascent = [vz[i] for i in range(liftoff_i, apogee_i + 1) if vz[i] == vz[i]]
+descent = [vz[i] for i in range(apogee_i + 1, n) if vz[i] == vz[i]]
+
+print("\nVERTICAL VELOCITY (differentiated barometric altitude)")
+print(f"  apogee at          : t = {time[apogee_i]:.2f} s")
+print(f"  peak ascent rate   : {max(ascent):.1f} m/s   <- quote this one")
+if descent:
+    print(f"  mean descent rate  : {sum(descent)/len(descent):.1f} m/s "
+          f"(under canopy)")
+vz_raw_valid = [v for v in vz_raw if v == v]
+print(f"  peak, unsmoothed   : {max(vz_raw_valid):.1f} m/s  <- single-sample "
+      f"artifact, do not quote")
 
 # ---------------------------------------------------------------------------
-# IMU bias and integration
+# Physics consistency checks. A barometer at a few Hz cannot resolve a boost
+# that lasts about a second, so the differentiated peak is unreliable in both
+# directions: transients inflate it and smoothing attenuates it. These two
+# independent checks bound the true burnout speed from the apogee and the
+# coast time, which are both robust.
 # ---------------------------------------------------------------------------
-x_bias = sum(x_g[:BIAS_SAMPLES]) / BIAS_SAMPLES
-y_bias = sum(y_g[:BIAS_SAMPLES]) / BIAS_SAMPLES
-z_bias = sum(z_g[:BIAS_SAMPLES]) / BIAS_SAMPLES
+coast_s = time[apogee_i] - time[liftoff_i]
+v_from_apogee = math.sqrt(2 * G * apogee)
+v_from_coast = G * coast_s
+v_peak = max(ascent)
 
-print(f'\nPad bias (first {BIAS_SAMPLES} samples):')
-print(f'  X: {x_bias:+.3f} g')
-print(f'  Y: {y_bias:+.3f} g')
-print(f'  Z: {z_bias:+.3f} g')
-print(f'  Total magnitude: {(x_bias**2 + y_bias**2 + z_bias**2)**0.5:.3f} g')
-
-ax_ms2 = [(a - x_bias) * G for a in x_g]
-ay_ms2 = [(a - y_bias) * G for a in y_g]
-az_ms2 = [(a - z_bias) * G for a in z_g]
-
-vx = integrate(ax_ms2, time)
-vy = integrate(ay_ms2, time)
-vz = integrate(az_ms2, time)
-
-px = integrate(vx, time)
-py = integrate(vy, time)
-pz = integrate(vz, time)
+print("\nCONSISTENCY CHECKS")
+print(f"  liftoff -> apogee  : {coast_s:.2f} s")
+print(f"  burnout speed implied by apogee ({apogee:.0f} m) : "
+      f">= {v_from_apogee:.1f} m/s")
+print(f"  burnout speed implied by coast time             : "
+      f">= {v_from_coast:.1f} m/s")
+print(f"  drag-free apogee implied by peak ascent rate    : "
+      f"{v_peak**2 / (2*G):.0f} m")
+if v_peak**2 / (2 * G) > 2.0 * apogee:
+    print("  MISMATCH: the quoted peak ascent rate implies an apogee far above")
+    print("  the measured one. It is a liftoff pressure transient, not airspeed.")
+    print(f"  Treat true burnout speed as roughly {v_from_apogee:.0f} to "
+          f"{1.3*v_from_apogee:.0f} m/s and do not quote the barometric peak.")
+elif v_peak < 0.8 * v_from_apogee:
+    print("  Peak ascent rate is below what the apogee requires. Smoothing at")
+    print("  this sample rate is attenuating the real peak. Do not quote it.")
+else:
+    print("  Peak ascent rate is consistent with the measured apogee.")
 
 # ---------------------------------------------------------------------------
 # Plot
 # ---------------------------------------------------------------------------
-fig, (ax4, ax5, ax1) = plt.subplots(3, 1, figsize=(12, 17), sharex=True)
+fig, (a1, a2, a3) = plt.subplots(3, 1, figsize=(11, 13), sharex=True)
 
-ax1.plot(time, x_g, label='X')
-ax1.plot(time, y_g, label='Y')
-ax1.plot(time, z_g, label='Z')
-ax1.set_ylabel('Acceleration (g)')
-ax1.set_title('Accel Axes (raw)')
-ax1.legend(); ax1.grid(True)
+ejection_t = time[sorted(overp)[0]] if overp else None
 
-baro_vz = [float('nan')]
-for i in range(1, len(altitude)):
-    a0, a1 = altitude[i-1], altitude[i]
-    dt = time[i] - time[i-1]
-    if dt > 0 and a0 == a0 and a1 == a1:
-        baro_vz.append((a1 - a0) / dt)
-    else:
-        baro_vz.append(float('nan'))
 
-valid_alt = [a for a in altitude if a == a]
-peak = max(valid_alt) if valid_alt else 0.0
-valid_baro_vz = [v for v in baro_vz if v == v]
-peak_baro_vz = max(valid_baro_vz) if valid_baro_vz else 0.0
+def mark_ejection(axis):
+    if ejection_t is not None:
+        axis.axvline(ejection_t, color="C1", ls="--", lw=1, alpha=0.8)
 
-ax4.plot(time, altitude, label=f'Baro altitude (peak {peak:.1f} m)', color='C3')
-ax4.set_ylabel('Altitude AGL (m)')
-ax4.set_title('Barometric Altitude (relative to pad)')
-ax4.legend(); ax4.grid(True)
 
-ax5.plot(time, baro_vz, label=f'Baro Vz (peak {peak_baro_vz:.1f} m/s)', color='C4')
-ax5.set_ylabel('Vertical velocity (m/s)')
-ax5.set_xlabel('Time (s)')
-ax5.set_title('Barometric Vertical Velocity (finite difference of altitude)')
-ax5.legend(); ax5.grid(True)
+a1.plot(time, altitude_flight, color="C3", lw=1.4,
+        label=f"Barometric altitude (apogee {apogee:.0f} m AGL)")
+a1.axvline(time[liftoff_i], color="0.6", ls="--", lw=1)
+a1.annotate("liftoff", (time[liftoff_i], 0), textcoords="offset points",
+            xytext=(5, 12), fontsize=9, color="0.35")
+mark_ejection(a1)
+if ejection_t is not None:
+    a1.annotate("ejection\n(overpressure masked)", (ejection_t, apogee * 0.55),
+                textcoords="offset points", xytext=(8, 0), fontsize=8,
+                color="C1")
+a1.set_ylim(-30, apogee * 1.15)
+a1.set_ylabel("Altitude AGL (m)")
+a1.set_title("Barometric altitude, pad-referenced")
+a1.legend(loc="lower right", fontsize=9)
+a1.grid(True, alpha=0.3)
 
+mean_descent = sum(descent) / len(descent) if descent else float("nan")
+a2.plot(time, vz, color="C4", lw=1.4,
+        label=f"Vertical velocity, {SMOOTH_W}-sample smoothed "
+              f"(descent {abs(mean_descent):.1f} m/s under canopy)")
+mark_ejection(a2)
+a2.annotate("ascent peak not resolved\nat this sample rate",
+            (time[liftoff_i], max(ascent) * 0.85),
+            textcoords="offset points", xytext=(14, 0), fontsize=8,
+            color="0.35")
+a2.set_ylim(min(-40, min(descent) * 1.4 if descent else -40),
+            max(ascent) * 1.3)
+a2.set_ylabel("Vertical velocity (m/s)")
+a2.set_title("Vertical velocity, differentiated from smoothed altitude")
+a2.legend(loc="upper right", fontsize=9)
+a2.grid(True, alpha=0.3)
+
+a3.plot(time, x_g, lw=1.0, label="X")
+a3.plot(time, y_g, lw=1.0, label="Y")
+a3.plot(time, z_g, lw=1.0, label="Z")
+a3.plot(time, mag, lw=1.6, color="k", alpha=0.75, label="|a|")
+mark_ejection(a3)
+a3.axhline(FS_G, color="r", ls=":", lw=1)
+a3.axhline(-FS_G, color="r", ls=":", lw=1)
+a3.annotate(f"specified +/-{FS_G} g range", (time[0], FS_G),
+            textcoords="offset points", xytext=(6, 5), fontsize=8, color="r")
+a3.set_ylabel("Acceleration (g)")
+a3.set_xlabel("Time (s)")
+a3.set_title(f"Accelerometer, {SENSITIVITY_MG_PER_LSB[FS_G]} mg/LSB "
+             f"(datasheet FS +/-{FS_G} g)")
+a3.legend(loc="upper right", fontsize=9, ncol=4)
+a3.grid(True, alpha=0.3)
+
+last_valid = max(i for i in range(n)
+                 if altitude_flight[i] == altitude_flight[i])
+a3.set_xlim(max(time[0], time[liftoff_i] - PLOT_LEAD_S),
+            min(time[-1], time[last_valid] + PLOT_TAIL_S))
+
+fig.suptitle("High-power rocket payload flight data, RP2040 bare-metal Ada",
+             fontsize=13, y=0.995)
 plt.tight_layout()
-plt.savefig(os.path.join(os.path.dirname(__file__), "flight_plot.png"), dpi=150)
-
-print(f"Plot saved. Peak baro altitude: {peak:.1f} m, peak baro Vz: {peak_baro_vz:.1f} m/s")
+out = os.path.join(HERE, "flight_plot.png")
+plt.savefig(out, dpi=160)
+print(f"\nPlot written to {out}")
+print("=" * 62)
