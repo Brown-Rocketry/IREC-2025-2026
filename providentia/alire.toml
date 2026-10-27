@@ -1,0 +1,28 @@
+name = "providentia"
+description = "Providentia payload avionics for the STM32 Nucleo-G431KB"
+version = "0.1.0-dev"
+
+authors = ["Margeaux Corrigan"]
+maintainers = ["Margeaux Corrigan <margeauxcorrigan@gmail.com>"]
+licenses = "MIT"
+website = ""
+tags = []
+
+executables = ["providentia"]
+
+[[depends-on]]
+light_tasking_stm32g4xx = "*"
+nucleo_g431kb = "*"
+
+# url + branch pins only, never path pins (design notes, section 7)
+[[pins]]
+nucleo_g431kb = { url = "https://github.com/GNAT-Academic-Program/nucleo_g431kb.git", branch = "main" }
+
+# Workaround for design notes section 3, item 2: stm32g431_ghal pins these
+# with path = '../xxx_generic', which resolves to alire/cache/pins/xxx_generic.
+# Alire rejects a url pin there (conflicting links), so we path-pin the same
+# directories and ./setup.sh clones them. Remove these three lines and
+# setup.sh once stm32g431_ghal switches to url pins.
+i2c_generic   = { path = "alire/cache/pins/i2c_generic" }
+spi_generic   = { path = "alire/cache/pins/spi_generic" }
+usart_generic = { path = "alire/cache/pins/usart_generic" }
