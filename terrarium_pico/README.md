@@ -2,7 +2,7 @@
 
 Bare-metal Ada firmware for the Brown Rocketry payload data acquisition system. Runs on a Raspberry Pi Pico (RP2040), polls a 9-axis IMU and a barometric sensor over a shared I2C bus, packs each reading into a fixed 28-byte record, and writes to SPI flash.
 
-Flown on a high-power launch at a RIMRA field, April 2026. Flight duration 45.2 seconds, against a configured ±16 g accelerometer range. The flash filled to capacity over a 1,497 minute campaign, 589,824 samples, recovered complete with no missing pages.
+Flown on a high-power launch at a RIMRA field, April 2026. Flight duration 45.2 seconds, against a configured ±16 g accelerometer range. The recovered log covers a 1,497 minute campaign with 438,912 samples, with continuous timestamps apart from one restart in the first seconds.
 
 See the [top-level README](../README.md) for vehicle context, team, and program history.
 
@@ -158,21 +158,22 @@ These registers are never written, so the parts run at their power-on defaults. 
 
 ### Sampling
 
-The sensors are configured far faster than the logger reads them. Accelerometer and gyroscope run at 119 Hz ODR, while the logging loop averaged **6.57 Hz** across the campaign and had fallen to **5 Hz** by the end. Every logged sample is therefore a fresh reading rather than a repeat, but the log is a decimated view of the available bandwidth, not the full signal.
+The sensors are configured far faster than the logger reads them. Accelerometer and gyroscope run at 119 Hz ODR, while the logging loop ran at a steady **4.9 Hz** across the campaign because the flight build had a 200 ms delay in the loop. Every logged sample is therefore a fresh reading rather than a repeat, but the log is a decimated view of the available bandwidth, not the full signal.
 
 | Measure | Value |
 |---|---|
 | Sensor output data rate | 119 Hz, accel and gyro |
-| Mean logging rate | 6.57 Hz, derived from 589,824 samples over 1,497.39 minutes |
-| Mean sample interval | 152.3 ms |
-| Final logging rate | 5 Hz, 200 ms interval |
-| Drift over the run | Interval grew about 31 percent from mean to final |
+| Mean logging rate | 4.88 Hz, derived from 438,912 samples over 1,497.39 minutes |
+| Mean sample interval | 204.7 ms |
+| Typical iteration | 203.65 ms: 200 ms delay plus about 3.65 ms of sensor reads and packing |
+| Iteration with a page write | About 210 ms, every 9th sample |
+| Iteration with a sector erase | About 261 ms on average and 268 ms at most, every 144th sample |
 
-The loop has no fixed period. It issues four I2C transactions, packs a sample, flushes a page every ninth iteration, and then applies a flat 6 ms delay. Loop time is set by whatever the bus and the flash do, not by a deadline, which is why the achieved rate is well below the nominal target. This is survivable only because every sample carries its own hardware timestamp: the cadence varies, the record of when each reading was taken does not.
+The loop has no fixed period. It issues four I2C transactions, packs a sample, flushes a page every ninth iteration, and then applies a flat 200 ms delay. The delay, not the bus or the flash, sets the rate, and it stayed constant across the whole log with no drift. Work still adds to the delay, so iterations that write or erase flash run longer. Every sample carries its own hardware timestamp, so this variation is fully recorded. The source now has a 6 ms delay, changed on May 24, 2026, after this log was recorded.
 
 **On the peak acceleration measurement.** The accelerometer was configured at ±16 g and the highest single logged sample is 14.5 G, roughly 90 percent of full scale. The channel did not saturate, so that reading is a real measurement rather than a rail.
 
-It is reported here but not treated as the flight's peak acceleration, because a single isolated sample at this rate cannot support that claim. The flight lasted 45.2 seconds, covered by roughly 230 to 300 logged samples depending on the loop rate at the time of launch, with only a handful spanning motor burn. A millisecond-scale event such as ejection charge firing is orders of magnitude shorter than the sample interval, so a lone spike is an aliased slice of a transient rather than a measurement of its magnitude. The figure quoted elsewhere for this flight is the sustained boost-phase acceleration of [FILL] G, which is supported by multiple consecutive samples.
+It is reported here but not treated as the flight's peak acceleration, because a single isolated sample at this rate cannot support that claim. The flight lasted 45.2 seconds, covered by about 222 logged samples, with only a handful spanning motor burn. A millisecond-scale event such as ejection charge firing is orders of magnitude shorter than the sample interval, so a lone spike is an aliased slice of a transient rather than a measurement of its magnitude. The figure quoted elsewhere for this flight is the sustained boost-phase acceleration of [FILL] G, which is supported by multiple consecutive samples.
 
 The distinction is a limitation of the logging rate, not of the sensor. See [Known limitations](#known-limitations).
 
@@ -222,16 +223,14 @@ The firmware erases sector 0 at boot and then erases each subsequent sector on d
 
 Capacity is 65,536 pages at 9 samples per page, or **589,824 samples** total.
 
-The flash filled completely across the flight and ground campaign, and the full image was recovered intact with no missing pages.
+The recovered log covers the flight and ground campaign and holds about 74 percent of the chip's capacity. The likely reason it ends there is that the 3xAA pack ran out at around 25 hours, since filling the chip at this rate would have taken about 33.5 hours. Battery voltage was not logged and a cut-off data capture would look the same, so this is not confirmed.
 
 | Measure | Value |
 |---|---|
 | Total logged time | 1,497.39 minutes, 24.96 hours |
-| Samples written | 589,824, full capacity |
-| Mean logging rate | 6.57 Hz |
+| Samples recovered | 438,912, about 74 percent of capacity |
+| Mean logging rate | 4.88 Hz |
 | Flight portion of the log | 45.2 s, about 0.05 percent of total |
-
-Because logging halts rather than wraps, filling the chip means the campaign ended when storage ran out rather than when testing finished.
 
 ---
 
@@ -318,7 +317,7 @@ Non-obvious behaviors found during development. Each of these cost real debuggin
 - **I2C pin mapping.** GP0/GP1 on `I2CM_0` is the only reliable configuration tested. GP2 through GP5 cause `Configure` to hang indefinitely.
 - **SPI reads.** The HAL's `Receive` does not generate clock cycles. Use the `Transfer` procedure in `flight_logger.adb`, which writes and reads one byte at a time through direct `RP2040_SVD.SPI` register access.
 - **SPI polarity.** `Active_Low` in `rp2040_hal` means CPOL=0, clock idles low. The name refers to the idle state, not the active state.
-- **WIP polling.** Sector erase takes roughly 400 ms. The `Wait_Until_Ready` loop has to cover it, or the following write corrupts data.
+- **WIP polling.** Sector erase iterations took about 51 ms longer than page writes in the flight log, and the datasheet allows up to 400 ms. The `Wait_Until_Ready` loop has to cover it, or the following write corrupts data.
 - **`Integer_16'Image`.** Hangs on the bare-metal runtime. Cast through `Integer_32` before printing.
 - **UART output.** Bulk `Transmit` drops bytes under rapid succession. `Put_Line` sends the whole buffer in one call followed by a busy-wait loop. Tune the loop count if bytes still drop.
 - **Runtime selection.** Use `light-cortex-m0p`. `light_tasking_rp2040` is incompatible with UART output.
@@ -329,18 +328,17 @@ Non-obvious behaviors found during development. Each of these cost real debuggin
 
 Recorded honestly, so anyone reading a recovered log knows what to expect.
 
-- **The logging rate cannot resolve the flight.** Roughly 6 Hz over a 45.2 second flight is a few hundred samples, and only a handful span motor burn. Shock events are orders of magnitude shorter than the 200 ms sample interval, so any single-sample spike is an aliased slice of a transient rather than a measurement of it. Capacity was never the constraint here: at 100 Hz the flash still holds well over an hour. The real limitation is that one continuous low-rate log was used for both the multi-hour ground campaign and the flight, when those two jobs want different rates.
-- **The loop slowed over the run and nothing noticed.** The mean rate across the campaign was 6.57 Hz, but the final rate was 5 Hz, an interval increase of about 31 percent. Nothing in the firmware measures, reports, or records its own loop rate, so the drift is only visible by differencing timestamps after recovery. Logging a loop-time or health field per page would have surfaced it live. The cause is worth isolating, with I2C retry behavior under a draining 3xAA supply as the first hypothesis to test.
+- **The logging rate cannot resolve the flight.** About 4.9 Hz over a 45.2 second flight is about 222 samples, and only a handful span motor burn. Shock events are orders of magnitude shorter than the 200 ms sample interval, so any single-sample spike is an aliased slice of a transient rather than a measurement of it. Capacity was never the constraint here: at 100 Hz the flash still holds well over an hour. The real limitation is that one continuous low-rate log was used for both the multi-hour ground campaign and the flight, when those two jobs want different rates.
+- **The loop does not record its own rate.** The rate held steady, but nothing in the firmware measures or reports it, so timing problems would only show up by differencing timestamps after recovery. A loop-time or health field per page would surface them live.
 - **Magnetometer auto-increment depends on the HAL.** The LSM9DS1 magnetometer requires bit 7 of the sub-address to be asserted for multi-byte reads, and this code passes `OUT_X_L_M` as a plain `0x28`. Recovered flight data shows three independent axes, so `rp2040_hal`'s `Mem_Read` is evidently handling it. Anything porting this logic off the crate, including a register-level rewrite, has to set that bit explicitly.
 - **Magnetometer Z axis is asymmetric with XY.** `CTRL_REG1_M` sets XY to ultra-high performance, but `CTRL_REG4_M` is never written, so Z stays in low-power mode. The three axes are not directly comparable in noise or resolution.
 - **BMP390 timing is unmanaged.** Oversampling, output rate, and IIR filtering are all left at reset defaults, and there is no data-ready check before a read. At the x4 pressure and x1 temperature defaults, measurement time is longer than the 5 ms period implied by the default ODR setting, which is a combination the datasheet warns against. It is practically invisible at a 5 Hz poll rate, but the configuration should be set explicitly rather than inherited.
-- **Timestamp wrap is not handled onboard.** `TIMERAWL` wraps about every 71 minutes. Across a log of this length that is roughly 20 to 27 wraps, all of which have to be reconstructed in post-processing. An epoch counter incremented on wrap detection would fix this for 4 bytes per page.
-- **Total logged duration needs to be derived, not estimated.** The flash filled completely, so duration follows from 589,824 samples divided by the achieved rate. At the 5 Hz final rate that is 32.8 hours, not the 23 hours quoted elsewhere; the two reconcile only if the loop ran faster early in the campaign and degraded. The recovered log carries per-sample timestamps, so first sample to last sample, corrected for wraps, gives the exact figure. Publish that number.
+- **Timestamp wrap is not handled onboard.** `TIMERAWL` wraps about every 71 minutes. Across a log of this length that is 20 wraps, all of which have to be reconstructed in post-processing. An epoch counter incremented on wrap detection would fix this for 4 bytes per page.
 - **The log is not self-describing.** Sensor full-scale ranges and output data rates exist only in source, not in the data. A configuration header page written at boot would make a recovered log interpretable on its own.
 - **No flight-state marker.** Liftoff, burnout, and apogee are all inferred post-flight from the accelerometer trace. One state byte per sample would make segmentation trivial.
 - **UART timing is calibrated, not checked.** The busy-wait loop after `Put_Line` is tuned empirically rather than gated on the UART FIFO status register. It works, and it is the wrong mechanism.
-- **Logging halts when flash fills, and it did.** Halting rather than wrapping is correct for a single-flight recovery, but the chip reached capacity on this campaign. Any future flight requires a deliberate erase first, and there is currently no boot-time check or warning that the chip is already full.
-- **The loop has no fixed period.** A flat 6 ms delay is appended to variable work, so cadence is set by bus and flash behavior rather than by a deadline. A timer-driven fixed-period loop would give a constant rate and remove the jitter. Per-sample hardware timestamps are what make the current design recoverable.
+- **Logging halts when flash fills.** Halting rather than wrapping is correct for a single-flight recovery. Any future flight requires a deliberate erase first, and there is currently no boot-time check or warning that the chip is already full.
+- **The loop has no fixed period.** A flat 200 ms delay is appended to variable work, so the delay caps the rate and flash writes still stretch individual iterations. A timer-driven fixed-period loop would give a constant rate and remove the jitter. Per-sample hardware timestamps are what make the current design recoverable.
 - **I2C is HAL-driven.** A schedule decision, documented above. The register-level rewrite lives in a [separate C driver stack](https://github.com/MargXX/Bare-Metal-Drivers).
 
 ---
