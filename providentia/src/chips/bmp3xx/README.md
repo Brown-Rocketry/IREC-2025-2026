@@ -53,8 +53,12 @@ package Baro is new Baro_Interface
    Driver_Check_Id         => Baro_Chip.Check_Id,
    Driver_Data_Ready       => Baro_Chip.Data_Ready,
    Driver_Read             => Baro_Chip.Read,
+   Driver_Read_Raw         => Baro_Chip.Read_Raw,
+   Driver_Compensate       => Baro_Chip.Compensate,
    Driver_Read_Calibration => Baro_Chip.Read_Calibration);
 ```
+
+The flight log stores `Read_Raw`'s 24-bit values, as the April log did, and the journal header stores the 21 calibration bytes and the chip id. `Compensate` turns the same raw values into pascals on board for the state machine; on the ground, the decoder does the same with the header's calibration (DS 8.5, 8.6). So the original ADC output is never lost.
 
 For any other bus (a second I2C, a bit-banged bus, a test fake), write the two register procedures and pass them to `BMP3XX`.
 

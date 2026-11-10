@@ -89,6 +89,15 @@ package BMP3XX is
    --  Ok is False before Init succeeds.
    procedure Read (R : out Baro_Types.Reading; Ok : out Boolean);
 
+   --  Read the latest pressure and temperature as the 24-bit ADC values.
+   --  Both are 0 and Ok is False before Init succeeds.
+   procedure Read_Raw (R : out Baro_Types.Raw_Reading; Ok : out Boolean);
+
+   --  Returns Raw compensated with the trim Init read. All zero before
+   --  Init has read the trim.
+   function Compensate
+     (Raw : Baro_Types.Raw_Reading) return Baro_Types.Reading;
+
    --  The 21 trim bytes read by Init. Length is 0 and Ok is False before
    --  Init has read them.
    procedure Read_Calibration
@@ -101,6 +110,11 @@ package BMP3XX is
 
    --  Read at full resolution, 0.01 Pa and 0.01 degree C.
    procedure Read_Fixed (F : out Fixed_Reading; Ok : out Boolean);
+
+   --  Returns Raw compensated at full resolution. Zero before Init has
+   --  read the trim.
+   function Compensate_Fixed (Raw : Baro_Types.Raw_Reading)
+     return Fixed_Reading;
 
    --  Returns the ODR register code for Cfg.Rate_Hz: the fastest rate at or
    --  below it, from 200 Hz halving down to about 0.0015 Hz.

@@ -4,9 +4,10 @@
 --  fitted chip.
 --
 --  General plan:
---  Read returns compensated values in the units from baro_types.ads. The
---  chip crate reads its raw registers and applies its own datasheet
---  formula, so nothing above it knows which chip is fitted.
+--  Read_Raw returns the chip's ADC values, which is what gets logged.
+--  Compensate turns them into the units from baro_types.ads with the
+--  chip's own datasheet formula, for anything on board that needs real
+--  units (the state machine's altitude). Read does both in one call.
 --
 --  Init soft resets the chip and writes every setting explicitly, then
 --  reads the mode back. The BMP390 keeps power across an MCU reset and was
@@ -24,6 +25,8 @@ generic
    with function Driver_Check_Id return Boolean;
    with function Driver_Data_Ready return Boolean;
    with procedure Driver_Read (R : out Reading; Ok : out Boolean);
+   with procedure Driver_Read_Raw (R : out Raw_Reading; Ok : out Boolean);
+   with function Driver_Compensate (Raw : Raw_Reading) return Reading;
    with procedure Driver_Read_Calibration
      (Cal : out Calibration_Blob;
       Ok  : out Boolean);
@@ -45,7 +48,17 @@ package Baro_Interface is
    --  Ok is False.
    procedure Read (R : out Reading; Ok : out Boolean) renames Driver_Read;
 
-   --  Return the factory calibration bytes, for the bench check.
+   --  Read the latest pressure and temperature as raw ADC values. Both are
+   --  0 if Ok is False.
+   procedure Read_Raw (R : out Raw_Reading; Ok : out Boolean)
+     renames Driver_Read_Raw;
+
+   --  Returns Raw compensated with the calibration Init read. All zero
+   --  before Init has read it.
+   function Compensate (Raw : Raw_Reading) return Reading
+     renames Driver_Compensate;
+
+   --  Return the factory calibration bytes, for the journal header.
    procedure Read_Calibration (Cal : out Calibration_Blob; Ok : out Boolean)
      renames Driver_Read_Calibration;
 

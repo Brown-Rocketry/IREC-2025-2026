@@ -196,10 +196,10 @@ package body BMP3XX is
    function Data_Ready return Boolean is
      (Configured and then Both_Ready);
 
-   procedure Read_Fixed (F : out Fixed_Reading; Ok : out Boolean) is
+   procedure Read_Raw (R : out Baro_Types.Raw_Reading; Ok : out Boolean) is
       Buf : Storage_Array (0 .. Data_Len - 1);
    begin
-      F  := (0, 0);
+      R  := (0, 0);
       Ok := Configured;
       if not Ok then
          return;
@@ -207,11 +207,29 @@ package body BMP3XX is
 
       --  pressure then temperature, 3 bytes each, LSB first
       Read_Regs (REG_DATA_0, Buf);
-      F := BMP3XX_Compensation.Compensate
-        (Trim,
-         Uncomp_Temp  => To_U24 (Buf (3), Buf (4), Buf (5)),
-         Uncomp_Press => To_U24 (Buf (0), Buf (1), Buf (2)));
+      R := (Pressure    => To_U24 (Buf (0), Buf (1), Buf (2)),
+            Temperature => To_U24 (Buf (3), Buf (4), Buf (5)));
+   end Read_Raw;
+
+   function Compensate_Fixed (Raw : Baro_Types.Raw_Reading)
+     return Fixed_Reading is
+     (if Have_Trim
+      then BMP3XX_Compensation.Compensate
+             (Trim,
+              Uncomp_Temp  => Raw.Temperature,
+              Uncomp_Press => Raw.Pressure)
+      else (0, 0));
+
+   procedure Read_Fixed (F : out Fixed_Reading; Ok : out Boolean) is
+      Raw : Baro_Types.Raw_Reading;
+   begin
+      Read_Raw (Raw, Ok);
+      F := (if Ok then Compensate_Fixed (Raw) else (0, 0));
    end Read_Fixed;
+
+   function Compensate
+     (Raw : Baro_Types.Raw_Reading) return Baro_Types.Reading is
+     (To_Reading (Compensate_Fixed (Raw)));
 
    function To_Reading (F : Fixed_Reading) return Baro_Types.Reading is
       --  0.01 Pa to 1/64 Pa is * 64 / 100 = * 16 / 25, rounded

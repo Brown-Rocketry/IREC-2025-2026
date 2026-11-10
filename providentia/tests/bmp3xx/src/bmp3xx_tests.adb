@@ -128,6 +128,9 @@ procedure BMP3XX_Tests is
                             V1.Raw_Temperature);
       Chip.Read (R, Ok);
       Check (not Ok and then R.Pressure = 0, "Read before Init is refused");
+      Check (Chip.Compensate ((V1.Raw_Pressure, V1.Raw_Temperature))
+               = (Pressure => 0, Temperature => 0),
+             "Compensate before Init gives zero");
       Check (not Chip.Data_Ready, "Data_Ready before Init is False");
 
       --  normal bring-up
@@ -151,6 +154,17 @@ procedure BMP3XX_Tests is
       Check (abs (Long_Float (Baro_Types.To_C (R.Temperature))
                   - V1.Temperature_C) <= 0.011,
              "Read temperature within 0.011 C of the reference");
+
+      declare
+         Raw : Baro_Types.Raw_Reading;
+      begin
+         Chip.Read_Raw (Raw, Ok);
+         Check (Ok and then Raw.Pressure = V1.Raw_Pressure
+                and then Raw.Temperature = V1.Raw_Temperature,
+                "Read_Raw returns the chip's ADC values unchanged");
+         Check (Chip.Compensate (Raw) = R,
+                "Compensate of the raw values matches Read");
+      end;
 
       declare
          Cal : Baro_Types.Calibration_Blob;

@@ -3,14 +3,20 @@
 --  Part of baro_generic. No hardware access.
 --
 --  General plan:
---  Every chip reports in the same physical units, so a reading means the
---  same thing whichever barometer is fitted, and the host decoder never
---  needs chip-specific code. Raw register values and the compensation
---  formula stay inside the chip crate: raw pressure from a BMP390 and from
---  a DPS310 can't be compared, and their widths differ (24-bit, 20-bit on
---  the BMP280, 16-bit temperature on the LPS22).
+--  Two forms of a reading:
+--     Raw_Reading  the ADC values as the chip gives them. This is what is
+--                  logged, so the original data is never lost and can be
+--                  compensated again later. Only meaningful together with
+--                  the chip's calibration, which the journal header holds.
+--                  Up to 24 bits each, which covers the BMP3xx (24), the
+--                  BMP280 (20) and the LPS22 (16-bit temperature).
+--     Reading      compensated, in the same physical units whatever chip
+--                  is fitted. Used on board by the state machine and the
+--                  bench check.
+--  The compensation formula stays inside the chip crate, because it is
+--  different for every chip.
 --
---  Units are fixed point so they pack straight into the log:
+--  Units of Reading are fixed point:
 --     Pressure     1/64 Pa, 24-bit unsigned. 0.016 Pa resolution, about
 --                  the BMP390's own, up to 262 kPa.
 --     Temperature  1/100 degree C, 16-bit signed, -327.68 to 327.67.
@@ -30,7 +36,15 @@ is
    subtype Pressure_Count    is Unsigned_32 range 0 .. 2**24 - 1;
    subtype Temperature_Count is Integer_16;
 
-   --  one compensated reading, as logged
+   --  ADC values straight from the chip, before compensation
+   subtype Raw_Count is Unsigned_32 range 0 .. 2**24 - 1;
+
+   type Raw_Reading is record
+      Pressure    : Raw_Count := 0;
+      Temperature : Raw_Count := 0;
+   end record;
+
+   --  one compensated reading
    type Reading is record
       Pressure    : Pressure_Count    := 0;
       Temperature : Temperature_Count := 0;
@@ -80,8 +94,8 @@ is
    end record;
 
    --  The chip's factory calibration, as the bytes it stores (21 on the
-   --  BMP390). Not needed to read the log, since readings are already
-   --  compensated. Kept for checking a chip on the bench.
+   --  BMP390). Stored in the journal header: the log holds raw readings,
+   --  and these bytes are what turns them into pascals and degrees.
    Max_Calibration_Size : constant := 32;
 
    type Calibration_Blob is record
