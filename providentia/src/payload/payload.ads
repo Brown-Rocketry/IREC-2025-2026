@@ -110,12 +110,16 @@ package Payload is
    end Imu;
 
    --  The barometer. Same operations as Baro_Interface; see
-   --  baro_interface.ads. Readings are compensated, in fixed units; use
-   --  Baro_Types.To_Pa and To_C for floats.
+   --  baro_interface.ads. Read_Raw is what gets logged; Read and
+   --  Compensate give fixed units, and Baro_Types.To_Pa and To_C turn
+   --  those into floats.
    package Baro is
       function Check_Id return Boolean;
       function Data_Ready return Boolean;
       procedure Read (R : out Baro_Types.Reading; Ok : out Boolean);
+      procedure Read_Raw (R : out Baro_Types.Raw_Reading; Ok : out Boolean);
+      function Compensate
+        (Raw : Baro_Types.Raw_Reading) return Baro_Types.Reading;
       procedure Read_Calibration
         (Cal : out Baro_Types.Calibration_Blob;
          Ok  : out Boolean);
@@ -125,6 +129,7 @@ package Payload is
    --  through Journal instead.
    package Flash is
       Page_Size   : constant := 256;
+      Sector_Size : constant := 4_096;   --  16 pages
       Total_Pages : constant := 65_536;  --  16 MB
 
       --  Returns True if the JEDEC id is the W25Q128's (EF 40 18).
@@ -139,6 +144,10 @@ package Payload is
          Data : out Storage_Array;
          Ok   : out Boolean);
 
+      --  Erase the 4 KB sector at Addr. Blocks for 45 ms typical, up to
+      --  400 ms on the W25Q128.
+      procedure Erase_Sector (Addr : Unsigned_32; Ok : out Boolean);
+
       --  Blocks for 40 s typical, up to 200 s on the W25Q128.
       procedure Erase_Chip (Ok : out Boolean);
    end Flash;
@@ -151,23 +160,26 @@ package Payload is
    package Flight is new Flight_State;
 
    package Journal is new Flight_Journal
-     (Record_Type      => Telemetry.Sample,
-      Record_Size      => Telemetry.Sample_Size,
-      Timestamp_Of     => Telemetry.Timestamp_Of,
-      Header_Type      => Telemetry.Header,
-      Header_Size      => Telemetry.Header_Size,
-      Phase_Type       => Flight.Phase,
-      Final_Phase      => Flight.Landed,
-      Format_Version   => Telemetry.Format_Version,
-      Page_Size        => Flash.Page_Size,
-      Total_Pages      => Flash.Total_Pages,
-      Flash_Write_Page => Flash.Write_Page,
-      Flash_Read       => Flash.Read,
-      Flash_Erase_Chip => Flash.Erase_Chip,
-      Armed            => Armed);
+     (Record_Type        => Telemetry.Sample,
+      Record_Size        => Telemetry.Sample_Size,
+      Timestamp_Of       => Telemetry.Timestamp_Of,
+      Header_Type        => Telemetry.Header,
+      Header_Size        => Telemetry.Header_Size,
+      Phase_Type         => Flight.Phase,
+      Final_Phase        => Flight.Landed,
+      Format_Version     => Telemetry.Format_Version,
+      Page_Size          => Flash.Page_Size,
+      Sector_Size        => Flash.Sector_Size,
+      Total_Pages        => Flash.Total_Pages,
+      Flash_Write_Page   => Flash.Write_Page,
+      Flash_Read         => Flash.Read,
+      Flash_Erase_Sector => Flash.Erase_Sector,
+      Flash_Erase_Chip   => Flash.Erase_Chip,
+      Armed              => Armed);
 
    --  Returns a journal header filled in with Imu_Settings, Baro_Settings,
-   --  the IMU scales and the baro calibration, plus the caller's loop tick
+   --  the IMU scales, the baro chip id and calibration, plus the caller's
+   --  loop tick
    --  and decimation. Ok is False if the calibration read failed.
    procedure Make_Header
      (Tick_Us   : Unsigned_32;

@@ -1,13 +1,15 @@
 --  flash_dump.adb
 --  Bench tool. Reads the flight log back over the console, then marks it
---  dumped and erases the chip when asked. Replaces terrarium_pico's
---  flash_reader and flash_reader_2.
+--  dumped when asked, which lets the next flight overwrite it. Replaces
+--  terrarium_pico's flash_reader and flash_reader_2.
 --
 --  General plan:
 --  Prints a summary, then waits for a one-letter command:
 --     D   dump page 0, page 1, then every written data page
---     M   mark the log dumped, once the capture has been checked
---     E   erase the whole chip; refused until the log is marked dumped
+--     M   mark the log dumped, once the capture has been checked. This is
+--         all the next flight needs: it erases sectors as it goes.
+--     E   erase the whole chip, for the bench; refused until the log is
+--         marked dumped
 --     S   print the summary again
 --  Lines starting with '#' are for people. Every other line is one 256-byte
 --  page as 512 hex digits with nothing else on it, in page order, so the

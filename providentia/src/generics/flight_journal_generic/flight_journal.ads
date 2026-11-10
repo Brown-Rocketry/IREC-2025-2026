@@ -7,10 +7,26 @@
 --  RAM array.
 --
 --  General plan:
---  The chip is erased before each campaign (Erase_All after a dump). The
---  journal never erases while logging, because a sector erase blocks for
---  tens to hundreds of ms and must not land in boost. One flight per
---  erase; 16 MB holds hours of flight rate.
+--  Sectors are erased on demand, one ahead of the writing. Before the
+--  first page of sector K is written, sector K + 1 is erased. So the
+--  sector after the write position is always blank, which is what makes
+--  a resume safe: after a reset, the first blank data page is the true end
+--  of this flight, and anything older beyond it is behind a blank sector,
+--  never mistaken for part of it.
+--
+--  A new flight starts by erasing sectors 0 and 1 (header, marker and the
+--  first data pages) at its first Append, which needs the arm jumper. It
+--  then overwrites the previous flight sector by sector. That is only
+--  allowed once the previous flight is marked dumped, so nothing is lost
+--  that hasn't been read back. No whole-chip erase is needed between
+--  flights; Erase_All is there for the bench.
+--
+--  Cost: a sector erase blocks the loop (W25Q128: 45 ms typical, 400 ms
+--  at most, DS tSE). At the boost rate a sector fills about every 0.2 s,
+--  so boost sees an erase every few ticks. The IMU keeps sampling into
+--  its FIFO through the stall, the next ticks drain it, and the trailer's
+--  missed-tick count records every stall. The FIFO has to hold the worst
+--  case erase at the boost rate; check that when the IMU crate is written.
 --
 --  Page layout, all values LSB first:
 --
@@ -69,8 +85,10 @@ generic
    --  change whenever Record_Type or Header_Type changes layout
    Format_Version : Unsigned_8;
 
-   --  flash geometry
+   --  flash geometry; Sector_Size is a whole number of pages, and the
+   --  header and marker pages fit in the first sector
    Page_Size   : Positive;
+   Sector_Size : Positive;
    Total_Pages : Positive;
 
    --  Program one page at byte address Addr. Data'Length = Page_Size and
@@ -86,7 +104,12 @@ generic
       Data : out Storage_Array;
       Ok   : out Boolean);
 
-   --  Erase the whole chip. Blocks for tens of seconds.
+   --  Erase the Sector_Size bytes starting at byte address Addr, which is
+   --  a multiple of Sector_Size. Blocks until done.
+   with procedure Flash_Erase_Sector (Addr : Unsigned_32; Ok : out Boolean);
+
+   --  Erase the whole chip. Blocks for tens of seconds. Only Erase_All
+   --  uses it.
    with procedure Flash_Erase_Chip (Ok : out Boolean);
 
    --  True when the arm jumper is in. Append refuses to write otherwise.
@@ -100,6 +123,7 @@ package Flight_Journal is
 
    Records_Per_Page : constant Positive :=
      (Page_Size - Trailer_Size) / Record_Size;
+   Pages_Per_Sector : constant Positive := Sector_Size / Page_Size;
    Data_Pages       : constant Positive := Total_Pages - First_Data_Page;
 
    type Record_Array is array (1 .. Records_Per_Page) of Record_Type;
@@ -131,17 +155,18 @@ package Flight_Journal is
    ---------------------------------------------------------------------
 
    type Open_Status is
-     (Fresh,         --  blank chip, logging starts at the first data page
+     (Fresh,         --  blank, or the last flight has been read back; a new
+                     --  flight starts at the first data page
       Resumed,       --  a flight was cut off by a reset; carry on after it
-      Needs_Dump,    --  holds a finished flight that hasn't been read back
-      Needs_Erase,   --  holds a finished flight that has been read back
-      Wrong_Format,  --  header from a different Format_Version
+      Needs_Dump,    --  holds a flight that hasn't been read back, or one
+                     --  in another Format_Version
       Full,          --  no blank data pages left
       Flash_Fault);  --  a flash read failed
 
    --  Get ready to log. Scans for the first blank data page so a reset
    --  carries on after existing data, and keeps Header for page 0. Writes
-   --  nothing, so opening on the bench costs no flash.
+   --  and erases nothing, so opening on the bench costs no flash and can't
+   --  touch the last flight.
    --  Append is only allowed after Fresh or Resumed. After Resumed, read
    --  the last phase with Inspect and restart the state machine there;
    --  the Boot count goes up by one.
@@ -155,10 +180,12 @@ package Flight_Journal is
       Errors       : Unsigned_16;
       Battery_mV   : Unsigned_16);
 
-   --  Buffer one record, and write the page when it fills. Writes page 0
-   --  first if this is the first page of the flight. Ok is False, with
-   --  nothing buffered, if not armed, not open, or full; a failed page
-   --  write also sets Ok to False, and that page's records are lost.
+   --  Buffer one record, and write the page when it fills. On the first
+   --  page of a fresh flight, erases sectors 0 and 1 and writes page 0
+   --  first. On the first page of any later sector, erases the sector after
+   --  it first (see the plan above). Ok is False, with nothing buffered, if
+   --  not armed, not open, or full; a failed erase or page write also sets
+   --  Ok to False, and that page's records are lost.
    procedure Append (R : Record_Type; Ok : out Boolean);
 
    --  Write the partly filled page now, if it holds any records. Use before
@@ -207,11 +234,12 @@ package Flight_Journal is
      with Pre => Page < Total_Pages and then Data'Length = Page_Size;
 
    --  Record that the log has been read back. The next Open_Append then
-   --  reports Needs_Erase instead of Needs_Dump.
+   --  reports Fresh, and the next flight overwrites this one.
    procedure Mark_Dumped (Ok : out Boolean);
 
-   --  Erase the whole chip. Ok is False, without erasing, if the chip holds
-   --  data that hasn't been marked dumped. Blocks for tens of seconds.
+   --  Erase the whole chip, for the bench; flights don't need it. Ok is
+   --  False, without erasing, if the chip holds data that hasn't been
+   --  marked dumped. Blocks for tens of seconds.
    procedure Erase_All (Ok : out Boolean);
 
 end Flight_Journal;
